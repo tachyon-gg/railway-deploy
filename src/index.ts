@@ -32,15 +32,36 @@ async function confirm(message: string): Promise<boolean> {
 
 const program = new Command()
   .name("railway-deploy")
-  .description("Declarative Railway infrastructure management")
-  .version("0.1.0")
-  .argument("<config>", "Path to environment YAML config file")
-  .option("--apply", "Execute changes (default: dry-run)")
-  .option("-y, --yes", "Skip confirmation prompts for destructive operations")
-  .option("--env-file <path>", "Load .env file for ${VAR} resolution")
-  .option("-v, --verbose", "Show detailed diffs (old → new values)")
-  .option("--no-color", "Disable ANSI color output")
-  .option("--validate", "Validate config without connecting to Railway")
+  .description(
+    `Declarative Railway infrastructure management.
+
+Define your Railway services, variables, domains, volumes, and more in YAML,
+and railway-deploy will diff against the live state and apply changes.
+
+Usage:
+  railway-deploy <config.yaml>               Dry-run — show what would change
+  railway-deploy --apply <config.yaml>       Apply changes to Railway
+  railway-deploy --validate <config.yaml>    Validate config without connecting
+
+Examples:
+  $ railway-deploy environments/production.yaml
+  $ railway-deploy --apply -y environments/staging.yaml
+  $ railway-deploy --validate environments/production.yaml
+  $ railway-deploy --env-file .env --apply environments/production.yaml
+
+Environment:
+  RAILWAY_TOKEN    Railway API token (required for all operations except --validate)
+
+Docs: https://github.com/tachyon-gg/railway-deploy`,
+  )
+  .version("0.2.3")
+  .argument("<config>", "path to environment YAML config file")
+  .option("--apply", "execute changes (default is dry-run)")
+  .option("--env-file <path>", "load .env file for ${VAR} resolution")
+  .option("--no-color", "disable colored output")
+  .option("--validate", "validate config syntax without connecting to Railway")
+  .option("-v, --verbose", "show detailed diffs with old and new values")
+  .option("-y, --yes", "skip confirmation prompts for destructive operations")
   .action(async (configPath: string, opts: CliOptions) => {
     try {
       await run(configPath, opts);
