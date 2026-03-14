@@ -16,7 +16,7 @@ interface CliOptions {
   yes?: boolean;
   envFile?: string;
   verbose?: boolean;
-  noColor?: boolean;
+  color?: boolean;
   validate?: boolean;
 }
 
@@ -153,7 +153,7 @@ async function run(configPath: string, opts: CliOptions) {
     tcpProxyMap,
   );
 
-  const noColor = opts.noColor ?? false;
+  const noColor = opts.color === false;
   const verbose = opts.verbose ?? false;
 
   printChangeset(changeset, {
