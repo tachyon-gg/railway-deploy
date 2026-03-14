@@ -35,6 +35,16 @@ describe("resolveEnvVarString", () => {
     );
   });
 
+  test("lenient mode leaves missing env vars as-is", () => {
+    const result = resolveEnvVarString("${MISSING}", {}, true);
+    expect(result).toBe("${MISSING}");
+  });
+
+  test("lenient mode still resolves available env vars", () => {
+    const result = resolveEnvVarString("${FOUND}:${MISSING}", { FOUND: "ok" }, true);
+    expect(result).toBe("ok:${MISSING}");
+  });
+
   test("leaves plain strings untouched", () => {
     const result = resolveEnvVarString("no vars here", {});
     expect(result).toBe("no vars here");
@@ -74,6 +84,11 @@ describe("resolveEnvVars", () => {
     const result = resolveEnvVars({ KEEP: "yes", DELETE: null }, {});
     expect(result).toEqual({ KEEP: "yes" });
     expect("DELETE" in result).toBe(false);
+  });
+
+  test("lenient mode leaves missing vars as-is", () => {
+    const result = resolveEnvVars({ DB: "${MISSING_URL}", STATIC: "value" }, {}, true);
+    expect(result).toEqual({ DB: "${MISSING_URL}", STATIC: "value" });
   });
 });
 
