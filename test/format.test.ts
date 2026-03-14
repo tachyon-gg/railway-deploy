@@ -42,6 +42,24 @@ describe("changeLabel", () => {
         mustContain: ["create-service", "node:20", "branch: main"],
       },
       {
+        change: {
+          type: "create-service",
+          name: "db",
+          source: { image: "postgres:16" },
+          volume: { mount: "/data", name: "pg-data" },
+        },
+        mustContain: ["create-service", "postgres:16", "volume: /data"],
+      },
+      {
+        change: {
+          type: "create-service",
+          name: "cron",
+          source: { image: "alpine" },
+          cronSchedule: "*/5 * * * *",
+        },
+        mustContain: ["create-service", "alpine", "cron: */5 * * * *"],
+      },
+      {
         change: { type: "delete-service", name: "old", serviceId: "svc-1" },
         mustContain: ["delete-service", "old", "svc-1"],
       },

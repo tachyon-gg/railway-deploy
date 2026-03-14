@@ -208,12 +208,6 @@ const ACTION_ICON: Record<Action, (noColor: boolean) => string> = {
   delete: (nc) => red("-", nc),
 };
 
-const CATEGORY_HEADER_ICON: Record<Action, (noColor: boolean) => string> = {
-  create: (nc) => green("+", nc),
-  update: (nc) => yellow("~", nc),
-  delete: (nc) => red("-", nc),
-};
-
 /**
  * Print a human-readable summary of the changeset to stdout.
  *
@@ -243,24 +237,27 @@ export function printChangeset(
   console.log(`\nChangeset (${changeset.changes.length} changes):\n`);
 
   // Group changes by category, preserving order of first appearance
-  const groups = new Map<string, Change[]>();
+  const groups = new Map<string, Array<{ change: Change; desc: ChangeDescription }>>();
   for (const change of changeset.changes) {
-    const { category } = describeChange(change);
-    if (!groups.has(category)) groups.set(category, []);
-    groups.get(category)?.push(change);
+    const desc = describeChange(change);
+    let group = groups.get(desc.category);
+    if (!group) {
+      group = [];
+      groups.set(desc.category, group);
+    }
+    group.push({ change, desc });
   }
 
   // Print each group
-  for (const [category, changes] of groups) {
+  for (const [category, entries] of groups) {
     // Determine the dominant action for the category header
-    const actions = new Set(changes.map((c) => describeChange(c).action));
+    const actions = new Set(entries.map((e) => e.desc.action));
     const headerAction: Action = actions.size === 1 ? [...actions][0] : "update";
-    const headerIcon = CATEGORY_HEADER_ICON[headerAction](noColor);
+    const headerIcon = ACTION_ICON[headerAction](noColor);
 
     console.log(`  ${headerIcon} ${category.toUpperCase()}:`);
 
-    for (const change of changes) {
-      const desc = describeChange(change);
+    for (const { change, desc } of entries) {
       const icon = ACTION_ICON[desc.action](noColor);
 
       // Verbose details for specific change types
@@ -298,15 +295,16 @@ export function printChangeset(
     console.log();
   }
 
-  // Summary line
+  // Summary line (reuse cached descriptions)
   let createCount = 0;
   let updateCount = 0;
   let deleteCount = 0;
-  for (const change of changeset.changes) {
-    const { action } = describeChange(change);
-    if (action === "create") createCount++;
-    else if (action === "update") updateCount++;
-    else deleteCount++;
+  for (const entries of groups.values()) {
+    for (const { desc } of entries) {
+      if (desc.action === "create") createCount++;
+      else if (desc.action === "update") updateCount++;
+      else deleteCount++;
+    }
   }
 
   const parts: string[] = [];
