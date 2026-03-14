@@ -1,5 +1,10 @@
 # railway-deploy
 
+[![CI](https://github.com/tachyon-gg/railway-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/tachyon-gg/railway-deploy/actions/workflows/ci.yml)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
+[![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1)](https://bun.sh/)
+[![Biome](https://img.shields.io/badge/linter-Biome-60a5fa)](https://biomejs.dev/)
+
 Declarative infrastructure management for [Railway](https://railway.com). Define your Railway project's services, variables, domains, volumes, and buckets in YAML, and `railway-deploy` will diff against the live state and apply changes — like Terraform, but purpose-built for Railway.
 
 ## Quick start
