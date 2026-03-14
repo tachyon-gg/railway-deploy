@@ -4,14 +4,14 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tachyon-gg/railway-deploy"
+    "url": "git+https://github.com/tachyon-gg/railway-deploy.git"
   },
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js"
   },
   "bin": {
-    "railway-deploy": "./dist/index.js"
+    "railway-deploy": "dist/index.js"
   },
   "files": [
     "dist/"
