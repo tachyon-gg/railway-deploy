@@ -1,8 +1,13 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "fs";
+import { createRequire } from "module";
 import { resolve } from "path";
 import { createInterface } from "readline";
 import { parse as parseYaml } from "yaml";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 import { loadEnvironmentConfig } from "./config/loader.js";
 import { validateEnvironmentConfig } from "./config/schema.js";
 import { loadEnvFile } from "./config/variables.js";
@@ -38,11 +43,6 @@ const program = new Command()
 Define your Railway services, variables, domains, volumes, and more in YAML,
 and railway-deploy will diff against the live state and apply changes.
 
-Usage:
-  railway-deploy <config.yaml>               Dry-run — show what would change
-  railway-deploy --apply <config.yaml>       Apply changes to Railway
-  railway-deploy --validate <config.yaml>    Validate config without connecting
-
 Examples:
   $ railway-deploy environments/production.yaml
   $ railway-deploy --apply -y environments/staging.yaml
@@ -54,12 +54,12 @@ Environment:
 
 Docs: https://github.com/tachyon-gg/railway-deploy`,
   )
-  .version("0.2.3")
+  .version(version)
   .argument("<config>", "path to environment YAML config file")
   .option("--apply", "execute changes (default is dry-run)")
   .option("--env-file <path>", "load .env file for ${VAR} resolution")
   .option("--no-color", "disable colored output")
-  .option("--validate", "validate config syntax without connecting to Railway")
+  .option("--validate", "validate config without connecting to Railway")
   .option("-v, --verbose", "show detailed diffs with old and new values")
   .option("-y, --yes", "skip confirmation prompts for destructive operations")
   .action(async (configPath: string, opts: CliOptions) => {
