@@ -1,0 +1,108 @@
+/** Raw YAML config types — before normalization to State */
+
+/** Parameter definition in a service template */
+export interface ParamDef {
+  required?: boolean;
+  default?: string;
+}
+
+/** Source configuration for a service */
+export interface SourceConfig {
+  image?: string;
+  repo?: string;
+}
+
+/** Volume configuration */
+export interface VolumeConfig {
+  mount: string;
+  name: string;
+}
+
+/** Healthcheck configuration */
+export interface HealthcheckConfig {
+  path: string;
+  timeout?: number;
+}
+
+/** Region configuration */
+export interface RegionConfig {
+  region: string;
+  num_replicas?: number;
+}
+
+/** Bucket configuration */
+export interface BucketConfig {
+  name: string;
+}
+
+/** Service template YAML structure (services/*.yaml) */
+export interface ServiceTemplate {
+  params?: Record<string, ParamDef>;
+  source?: SourceConfig;
+  variables?: Record<string, string | null>;
+  /** Singular domain (convenience — normalized to domains[]) */
+  domain?: string;
+  /** Multiple domains */
+  domains?: string[];
+  regions?: RegionConfig[];
+  restart_policy?: string;
+  healthcheck?: HealthcheckConfig;
+  cron_schedule?: string;
+  volume?: VolumeConfig;
+  start_command?: string;
+  build_command?: string;
+  root_directory?: string;
+  dockerfile_path?: string;
+  pre_deploy_command?: string;
+  restart_policy_max_retries?: number;
+  sleep_application?: boolean;
+}
+
+/** Service entry in an environment file */
+export interface ServiceEntry {
+  /** Path to a service template file */
+  template?: string;
+  /** Parameter values to pass to the template */
+  params?: Record<string, string>;
+  /** Additional/override variables */
+  variables?: Record<string, string | null>;
+  /** Inline source (when no template) */
+  source?: SourceConfig;
+  /** Singular domain (convenience — normalized to domains[]) */
+  domain?: string;
+  /** Multiple domains */
+  domains?: string[];
+  /** Inline volume (when no template) */
+  volume?: VolumeConfig;
+  /** Inline regions (when no template) */
+  regions?: RegionConfig[];
+  /** Inline restart policy */
+  restart_policy?: string;
+  /** Inline healthcheck */
+  healthcheck?: HealthcheckConfig;
+  /** Inline cron schedule */
+  cron_schedule?: string;
+  /** Inline start command */
+  start_command?: string;
+  /** Inline build command */
+  build_command?: string;
+  /** Inline root directory */
+  root_directory?: string;
+  /** Inline Dockerfile path */
+  dockerfile_path?: string;
+  /** Inline pre-deploy command */
+  pre_deploy_command?: string;
+  /** Inline restart policy max retries */
+  restart_policy_max_retries?: number;
+  /** Inline sleep application */
+  sleep_application?: boolean;
+}
+
+/** Top-level environment file YAML structure (environments/*.yaml) */
+export interface EnvironmentConfig {
+  project: string;
+  environment: string;
+  shared_variables?: Record<string, string | null>;
+  services: Record<string, ServiceEntry>;
+  buckets?: Record<string, BucketConfig>;
+}

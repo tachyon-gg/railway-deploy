@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Railway Deploy Environment Config",
+  "description": "Declarative environment configuration for Railway Deploy. Defines the desired state of a Railway project environment including services, variables, and buckets.",
+  "type": "object",
+  "required": ["project", "environment", "services"],
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Railway project name (must match exactly).",
+      "minLength": 1
+    },
+    "environment": {
+      "type": "string",
+      "description": "Railway environment name (e.g., 'production', 'staging').",
+      "minLength": 1
+    },
+    "shared_variables": {
+      "type": "object",
+      "description": "Environment-level variables shared across all services. Set a value to null to delete it. Supports ${ENV_VAR} for local env resolution and ${{service.VAR}} for Railway runtime references.",
+      "additionalProperties": {
+        "oneOf": [{ "type": "string" }, { "type": "null" }]
+      }
+    },
+    "services": {
+      "type": "object",
+      "description": "Map of service name → service configuration. Each service can reference a template or be defined inline.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServiceEntry"
+      }
+    },
+    "buckets": {
+      "type": "object",
+      "description": "Map of bucket key → bucket configuration. Creates S3-compatible Railway buckets.",
+      "additionalProperties": {
+        "$ref": "#/$defs/BucketConfig"
+      }
+    }
+  },
+  "$defs": {
+    "ServiceEntry": {
+      "type": "object",
+      "description": "Service configuration — either references a template file or defines settings inline.",
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "type": "string",
+          "description": "Relative path to a service template YAML file."
+        },
+        "params": {
+          "type": "object",
+          "description": "Parameter values to pass to the template, replacing %{param} placeholders.",
+          "additionalProperties": { "type": "string" }
+        },
+        "variables": {
+          "type": "object",
+          "description": "Service-level variables. Merged with template variables (overrides take precedence). Set to null to delete. Supports ${ENV_VAR} and ${{service.VAR}} syntax.",
+          "additionalProperties": {
+            "oneOf": [{ "type": "string" }, { "type": "null" }]
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/SourceConfig"
+        },
+        "domain": {
+          "type": "string",
+          "description": "Single custom domain for this service (convenience — use 'domains' for multiple). Supports %{param} and ${ENV_VAR}."
+        },
+        "domains": {
+          "type": "array",
+          "description": "Custom domains for this service.",
+          "items": { "type": "string" }
+        },
+        "volume": {
+          "$ref": "#/$defs/VolumeConfig"
+        },
+        "regions": {
+          "type": "array",
+          "description": "Deployment regions.",
+          "items": { "$ref": "#/$defs/RegionConfig" }
+        },
+        "restart_policy": {
+          "type": "string",
+          "description": "Restart policy for the service.",
+          "enum": ["ALWAYS", "NEVER", "ON_FAILURE"]
+        },
+        "healthcheck": {
+          "$ref": "#/$defs/HealthcheckConfig"
+        },
+        "cron_schedule": {
+          "type": "string",
+          "description": "Cron schedule (5-field format, e.g., '*/5 * * * *'). Minimum interval on Railway is 5 minutes."
+        },
+        "start_command": {
+          "type": "string",
+          "description": "Custom start command for the service."
+        },
+        "build_command": {
+          "type": "string",
+          "description": "Custom build command (Nixpacks/Heroku builds)."
+        },
+        "root_directory": {
+          "type": "string",
+          "description": "Root directory for the service (monorepo support)."
+        },
+        "dockerfile_path": {
+          "type": "string",
+          "description": "Path to a custom Dockerfile."
+        },
+        "pre_deploy_command": {
+          "type": "string",
+          "description": "Command to run before deployment (e.g., DB migrations)."
+        },
+        "restart_policy_max_retries": {
+          "type": "integer",
+          "description": "Max retries for ON_FAILURE restart policy.",
+          "minimum": 0
+        },
+        "sleep_application": {
+          "type": "boolean",
+          "description": "Enable application sleeping for cost savings."
+        }
+      }
+    },
+    "SourceConfig": {
+      "type": "object",
+      "description": "Service source — specify either 'image' (container) or 'repo' (GitHub), not both.",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1'). Supports %{param} placeholders."
+        },
+        "repo": {
+          "type": "string",
+          "description": "GitHub repository URL."
+        }
+      }
+    },
+    "VolumeConfig": {
+      "type": "object",
+      "description": "Persistent volume configuration.",
+      "required": ["mount", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "mount": {
+          "type": "string",
+          "description": "Mount path inside the container (must be absolute, e.g., '/data').",
+          "pattern": "^/"
+        },
+        "name": {
+          "type": "string",
+          "description": "Volume name.",
+          "minLength": 1
+        }
+      }
+    },
+    "HealthcheckConfig": {
+      "type": "object",
+      "description": "HTTP healthcheck configuration.",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "HTTP path for healthcheck (e.g., '/health').",
+          "minLength": 1
+        },
+        "timeout": {
+          "type": "number",
+          "description": "Healthcheck timeout in seconds (default: 300).",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "RegionConfig": {
+      "type": "object",
+      "description": "Deployment region configuration.",
+      "required": ["region"],
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "Railway region identifier.",
+          "minLength": 1
+        },
+        "num_replicas": {
+          "type": "integer",
+          "description": "Number of replicas in this region (default: 1).",
+          "minimum": 1
+        }
+      }
+    },
+    "BucketConfig": {
+      "type": "object",
+      "description": "S3-compatible bucket configuration.",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Bucket name in Railway.",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

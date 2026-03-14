@@ -1,0 +1,255 @@
+import type { GraphQLClient } from "graphql-request";
+import type { GetProjectQuery } from "../generated/graphql.js";
+import {
+  GetProjectDocument,
+  GetSharedVariablesDocument,
+  GetVariablesDocument,
+  ListProjectsDocument,
+} from "../generated/graphql.js";
+import type { BucketState, ServiceState, State } from "../types/state.js";
+import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
+
+/**
+ * Resolve a project name to its ID.
+ */
+export async function resolveProjectId(
+  client: GraphQLClient,
+  projectName: string,
+): Promise<string> {
+  const data = await client.request(ListProjectsDocument);
+
+  const project = data.projects.edges.find((e) => e.node.name === projectName);
+  if (!project) {
+    const available = data.projects.edges.map((e) => e.node.name).join(", ");
+    throw new Error(`Project "${projectName}" not found. Available: ${available}`);
+  }
+  return project.node.id;
+}
+
+/**
+ * Resolve an environment name to its ID within a project.
+ */
+export async function resolveEnvironmentId(
+  client: GraphQLClient,
+  projectId: string,
+  environmentName: string,
+): Promise<string> {
+  const data = await client.request(GetProjectDocument, { id: projectId });
+
+  const env = data.project.environments.edges.find((e) => e.node.name === environmentName);
+  if (!env) {
+    const available = data.project.environments.edges.map((e) => e.node.name).join(", ");
+    throw new Error(`Environment "${environmentName}" not found. Available: ${available}`);
+  }
+  return env.node.id;
+}
+
+type ServiceNode = GetProjectQuery["project"]["services"]["edges"][number]["node"];
+
+/**
+ * Fetch current state from Railway for a project + environment.
+ */
+export async function fetchCurrentState(
+  client: GraphQLClient,
+  projectId: string,
+  environmentId: string,
+): Promise<{
+  state: State;
+  domainMap: Record<string, Array<{ id: string; domain: string }>>;
+  volumeMap: Record<string, { volumeId: string; mount: string; name: string }>;
+}> {
+  const projectData = await client.request(GetProjectDocument, {
+    id: projectId,
+  });
+
+  // Build volume lookup: serviceId -> volume info (from project.volumes)
+  const volumeLookup = new Map<string, { mount: string; name: string; volumeId: string }>();
+  for (const volEdge of projectData.project.volumes.edges) {
+    const volume = volEdge.node;
+    for (const viEdge of volume.volumeInstances.edges) {
+      const vi = viEdge.node;
+      if (vi.environmentId === environmentId && vi.serviceId) {
+        volumeLookup.set(vi.serviceId, {
+          mount: vi.mountPath,
+          name: volume.name,
+          volumeId: volume.id,
+        });
+      }
+    }
+  }
+
+  const services: Record<string, ServiceState> = {};
+  const domainMap: Record<string, Array<{ id: string; domain: string }>> = {};
+  const volumeMap: Record<string, { volumeId: string; mount: string; name: string }> = {};
+
+  // Only process services that have an instance in this environment
+  const serviceNodes = projectData.project.services.edges.map((e) => e.node);
+  const servicesInEnv = serviceNodes.filter((svc) =>
+    svc.serviceInstances.edges.some((e) => e.node.environmentId === environmentId),
+  );
+
+  // Fetch variables for all services in parallel, tolerating individual failures
+  const variableResults = await Promise.allSettled(
+    servicesInEnv.map((svc) =>
+      client
+        .request(GetVariablesDocument, {
+          projectId,
+          environmentId,
+          serviceId: svc.id,
+        })
+        .then((data) => ({ serviceId: svc.id, variables: data.variables })),
+    ),
+  );
+
+  const variableLookup = new Map<string, Record<string, string>>();
+  const fetchErrors: string[] = [];
+  for (const result of variableResults) {
+    if (result.status === "fulfilled") {
+      variableLookup.set(result.value.serviceId, result.value.variables);
+    } else {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      fetchErrors.push(reason);
+    }
+  }
+  if (fetchErrors.length > 0) {
+    throw new Error(
+      `Failed to fetch variables for ${fetchErrors.length} service(s) — aborting to prevent incorrect diff:\n  ${fetchErrors.join("\n  ")}`,
+    );
+  }
+
+  for (const svc of servicesInEnv) {
+    const instanceEdge = svc.serviceInstances.edges.find(
+      (e) => e.node.environmentId === environmentId,
+    );
+    if (!instanceEdge) {
+      console.warn(
+        `  Warning: Service "${svc.name}" has no instance in this environment — skipping`,
+      );
+      continue;
+    }
+    const instance = instanceEdge.node;
+
+    const vol = volumeLookup.get(svc.id);
+    services[svc.name] = buildServiceState(
+      svc,
+      instance,
+      variableLookup.get(svc.id) || {},
+      vol ? { mount: vol.mount, name: vol.name } : undefined,
+    );
+
+    if (instance.domains.customDomains.length > 0) {
+      domainMap[svc.name] = instance.domains.customDomains;
+    }
+
+    if (vol) {
+      volumeMap[svc.name] = vol;
+    }
+  }
+
+  // Fetch shared (environment-level) variables
+  const sharedData = await client.request(GetSharedVariablesDocument, {
+    projectId,
+    environmentId,
+  });
+
+  // Extract buckets
+  const buckets: Record<string, BucketState> = {};
+  for (const edge of projectData.project.buckets.edges) {
+    const bucket = edge.node;
+    // Use bucket name as key (user-facing identifier)
+    buckets[bucket.name] = {
+      id: bucket.id,
+      name: bucket.name,
+    };
+  }
+
+  return {
+    state: {
+      projectId,
+      environmentId,
+      sharedVariables: sharedData.variables,
+      services,
+      buckets,
+    },
+    domainMap,
+    volumeMap,
+  };
+}
+
+type InstanceNode = ServiceNode["serviceInstances"]["edges"][number]["node"];
+
+function buildServiceState(
+  svc: ServiceNode,
+  instance: InstanceNode,
+  variables: Record<string, string>,
+  volume?: { mount: string; name: string },
+): ServiceState {
+  const state: ServiceState = {
+    name: svc.name,
+    id: svc.id,
+    variables,
+    domains: [],
+  };
+
+  if (instance.source?.image) {
+    state.source = { image: instance.source.image };
+  }
+  if (instance.source?.repo) {
+    state.source = { ...state.source, repo: instance.source.repo };
+  }
+  if (instance.region) {
+    state.regions = [
+      {
+        region: instance.region,
+        numReplicas: instance.numReplicas ?? DEFAULT_NUM_REPLICAS,
+      },
+    ];
+  }
+  if (instance.restartPolicyType) {
+    state.restartPolicy = instance.restartPolicyType;
+  }
+  if (instance.healthcheckPath) {
+    state.healthcheck = {
+      path: instance.healthcheckPath,
+      timeout: instance.healthcheckTimeout ?? DEFAULT_HEALTHCHECK_TIMEOUT,
+    };
+  }
+  if (instance.cronSchedule) {
+    state.cronSchedule = instance.cronSchedule;
+  }
+  if (instance.startCommand) {
+    state.startCommand = instance.startCommand;
+  }
+  if (instance.buildCommand) {
+    state.buildCommand = instance.buildCommand;
+  }
+  if (instance.rootDirectory) {
+    state.rootDirectory = instance.rootDirectory;
+  }
+  if (instance.dockerfilePath) {
+    state.dockerfilePath = instance.dockerfilePath;
+  }
+  if (instance.preDeployCommand) {
+    // Railway returns preDeployCommand as JSON (string or string[])
+    const pdc = instance.preDeployCommand;
+    if (typeof pdc === "string") {
+      state.preDeployCommand = pdc;
+    } else if (Array.isArray(pdc) && pdc.length > 0) {
+      state.preDeployCommand = pdc.filter(Boolean).join(" && ");
+    }
+  }
+  if (instance.restartPolicyMaxRetries !== undefined && instance.restartPolicyMaxRetries !== null) {
+    state.restartPolicyMaxRetries = instance.restartPolicyMaxRetries;
+  }
+  if (instance.sleepApplication !== undefined && instance.sleepApplication !== null) {
+    state.sleepApplication = instance.sleepApplication;
+  }
+  if (volume) {
+    state.volume = volume;
+  }
+  if (instance.domains.customDomains.length > 0) {
+    state.domains = instance.domains.customDomains.map((d) => d.domain);
+  }
+
+  return state;
+}

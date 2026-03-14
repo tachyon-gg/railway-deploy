@@ -1,0 +1,97 @@
+query ListProjects {
+  projects {
+    edges {
+      node {
+        id
+        name
+      }
+    }
+  }
+}
+
+query GetProject($id: String!) {
+  project(id: $id) {
+    id
+    name
+    environments {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+    services {
+      edges {
+        node {
+          id
+          name
+          serviceInstances {
+            edges {
+              node {
+                environmentId
+                source {
+                  image
+                  repo
+                }
+                domains {
+                  customDomains {
+                    id
+                    domain
+                  }
+                }
+                region
+                numReplicas
+                restartPolicyType
+                restartPolicyMaxRetries
+                healthcheckPath
+                healthcheckTimeout
+                cronSchedule
+                startCommand
+                buildCommand
+                rootDirectory
+                dockerfilePath
+                preDeployCommand
+                sleepApplication
+              }
+            }
+          }
+        }
+      }
+    }
+    buckets {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+    volumes {
+      edges {
+        node {
+          id
+          name
+          volumeInstances {
+            edges {
+              node {
+                id
+                mountPath
+                environmentId
+                serviceId
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query GetVariables($projectId: String!, $environmentId: String!, $serviceId: String!) {
+  variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+}
+
+query GetSharedVariables($projectId: String!, $environmentId: String!) {
+  variables(projectId: $projectId, environmentId: $environmentId)
+}

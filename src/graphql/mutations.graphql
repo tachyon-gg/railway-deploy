@@ -1,0 +1,55 @@
+mutation ServiceCreate($input: ServiceCreateInput!) {
+  serviceCreate(input: $input) {
+    id
+    name
+  }
+}
+
+mutation ServiceDelete($id: String!) {
+  serviceDelete(id: $id)
+}
+
+mutation VariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
+  variableCollectionUpsert(input: $input)
+}
+
+mutation VariableDelete($input: VariableDeleteInput!) {
+  variableDelete(input: $input)
+}
+
+mutation CustomDomainCreate($input: CustomDomainCreateInput!) {
+  customDomainCreate(input: $input) {
+    id
+    domain
+  }
+}
+
+mutation CustomDomainDelete($id: String!) {
+  customDomainDelete(id: $id)
+}
+
+mutation ServiceInstanceUpdate(
+  $serviceId: String!
+  $environmentId: String
+  $input: ServiceInstanceUpdateInput!
+) {
+  serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+}
+
+mutation VolumeCreate($input: VolumeCreateInput!) {
+  volumeCreate(input: $input) {
+    id
+    name
+  }
+}
+
+mutation VolumeDelete($volumeId: String!) {
+  volumeDelete(volumeId: $volumeId)
+}
+
+mutation BucketCreate($input: BucketCreateInput!) {
+  bucketCreate(input: $input) {
+    id
+    name
+  }
+}

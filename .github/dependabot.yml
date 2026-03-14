@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "csangani"
+    groups:
+      npm-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps-npm)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "csangani"
+    groups:
+      actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps-actions)"

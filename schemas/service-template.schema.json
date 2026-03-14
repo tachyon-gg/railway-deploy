@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Railway Deploy Service Template",
+  "description": "Service template defining reusable service configuration. Templates support %{param} placeholders that are resolved when referenced from an environment config.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "params": {
+      "type": "object",
+      "description": "Parameter definitions. Each param can be required or have a default value. Referenced in other fields as %{param_name}.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "Whether this parameter must be provided by the environment config."
+          },
+          "default": {
+            "type": "string",
+            "description": "Default value if not provided by the environment config."
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Service source — specify either 'image' or 'repo', not both. Supports %{param} placeholders.",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image (e.g., 'ghcr.io/org/app:%{tag}'). Supports %{param} placeholders."
+        },
+        "repo": {
+          "type": "string",
+          "description": "GitHub repository URL."
+        }
+      }
+    },
+    "variables": {
+      "type": "object",
+      "description": "Default service variables. Supports %{param}, ${ENV_VAR}, and ${{service.VAR}} syntax. Set to null to mark for deletion.",
+      "additionalProperties": {
+        "oneOf": [{ "type": "string" }, { "type": "null" }]
+      }
+    },
+    "domain": {
+      "type": "string",
+      "description": "Single custom domain (convenience — use 'domains' for multiple). Supports %{param} and ${ENV_VAR}."
+    },
+    "domains": {
+      "type": "array",
+      "description": "Custom domains for this service.",
+      "items": { "type": "string" }
+    },
+    "regions": {
+      "type": "array",
+      "description": "Deployment regions.",
+      "items": {
+        "type": "object",
+        "required": ["region"],
+        "additionalProperties": false,
+        "properties": {
+          "region": { "type": "string", "minLength": 1 },
+          "num_replicas": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "restart_policy": {
+      "type": "string",
+      "enum": ["ALWAYS", "NEVER", "ON_FAILURE"],
+      "description": "Restart policy for the service."
+    },
+    "healthcheck": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "HTTP healthcheck path.", "minLength": 1 },
+        "timeout": {
+          "type": "number",
+          "description": "Timeout in seconds (default: 300).",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "cron_schedule": {
+      "type": "string",
+      "description": "Cron schedule (5-field format). Minimum interval on Railway is 5 minutes."
+    },
+    "volume": {
+      "type": "object",
+      "required": ["mount", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "mount": {
+          "type": "string",
+          "description": "Absolute mount path (e.g., '/data').",
+          "pattern": "^/"
+        },
+        "name": { "type": "string", "description": "Volume name.", "minLength": 1 }
+      }
+    },
+    "start_command": {
+      "type": "string",
+      "description": "Custom start command."
+    },
+    "build_command": {
+      "type": "string",
+      "description": "Custom build command (Nixpacks/Heroku builds)."
+    },
+    "root_directory": {
+      "type": "string",
+      "description": "Root directory (monorepo support)."
+    },
+    "dockerfile_path": {
+      "type": "string",
+      "description": "Path to a custom Dockerfile."
+    },
+    "pre_deploy_command": {
+      "type": "string",
+      "description": "Pre-deploy command (e.g., DB migrations)."
+    },
+    "restart_policy_max_retries": {
+      "type": "integer",
+      "description": "Max retries for ON_FAILURE restart policy.",
+      "minimum": 0
+    },
+    "sleep_application": {
+      "type": "boolean",
+      "description": "Enable application sleeping."
+    }
+  }
+}
