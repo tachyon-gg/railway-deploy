@@ -172,7 +172,7 @@ function resolveService(
     params = { ...resolveParams(template.params, entry.params || {}), service_name: name };
   }
 
-  // Start with template values, expand params
+  // Start with template values, expand %{param} placeholders (only in template values)
   let source = template?.source ? expandParamsDeep(template.source, params) : entry.source;
   const volume = template?.volume ? expandParamsDeep(template.volume, params) : entry.volume;
   const region = template?.region ? expandParamsDeep(template.region, params) : entry.region;
@@ -223,11 +223,8 @@ function resolveService(
 
   // Normalize domains from template and entry
   let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
-  if (template) {
-    const tplDomains = template.domains
-      ? (expandParamsDeep(template.domains, params) as DomainEntry[])
-      : undefined;
-    templateDomains = normalizeDomains(tplDomains);
+  if (template?.domains) {
+    templateDomains = normalizeDomains(expandParamsDeep(template.domains, params) as DomainEntry[]);
   }
   const entryDomains = normalizeDomains(entry.domains);
 

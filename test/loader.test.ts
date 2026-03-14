@@ -671,4 +671,79 @@ services:
     const result = loadEnvironmentConfig(join(ENVS_DIR, "env-vars.yaml"), { lenient: true });
     expect(result.state.services.web.variables.SECRET).toBe("${UNDEFINED_SECRET}");
   });
+
+  test("%{service_name} is automatically available in templates", () => {
+    writeFileSync(
+      join(SERVICES_DIR, "self-ref.yaml"),
+      `
+source:
+  image: nginx:latest
+variables:
+  NAME: "%{service_name}"
+domains:
+  - "%{service_name}.example.com"
+`,
+    );
+    writeFileSync(
+      join(ENVS_DIR, "self-ref.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  my-api:
+    template: ../services/self-ref.yaml
+`,
+    );
+
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "self-ref.yaml"));
+    const svc = result.state.services["my-api"];
+    expect(svc.variables.NAME).toBe("my-api");
+    expect(svc.domains[0].domain).toBe("my-api.example.com");
+  });
+
+  test("overriding service_name as a param throws", () => {
+    writeFileSync(
+      join(ENVS_DIR, "override-service-name.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/self-ref.yaml
+    params:
+      service_name: custom
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "override-service-name.yaml"))).toThrow(
+      "built-in parameter",
+    );
+  });
+
+  test("defining service_name in template params throws", () => {
+    writeFileSync(
+      join(SERVICES_DIR, "bad-param.yaml"),
+      `
+params:
+  service_name:
+    default: oops
+source:
+  image: nginx:latest
+`,
+    );
+    writeFileSync(
+      join(ENVS_DIR, "bad-template-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/bad-param.yaml
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-template-param.yaml"))).toThrow(
+      "built-in parameter",
+    );
+  });
 });
