@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { loadEnvironmentConfig } from "../../src/config/loader.js";
@@ -84,7 +84,7 @@ services:
         domainMap: afterDomains,
         volumeMap: afterVolumes,
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-      expect(after.services["web"].startCommand).toBe("nginx -g 'daemon off;'");
+      expect(after.services.web.startCommand).toBe("nginx -g 'daemon off;'");
 
       const secondDiff = computeChangeset(
         desired,
@@ -145,7 +145,7 @@ services:
         domainMap: afterDomains,
         volumeMap: afterVolumes,
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-      expect(after.services["web"].source?.image).toBe("nginx:stable");
+      expect(after.services.web.source?.image).toBe("nginx:stable");
 
       const secondDiff = computeChangeset(
         desired,

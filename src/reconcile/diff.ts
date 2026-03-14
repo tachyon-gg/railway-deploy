@@ -10,7 +10,20 @@ function isRailwayManaged(key: string): boolean {
 }
 
 /**
- * Compute a changeset by diffing desired state against current state.
+ * Compute a changeset by diffing desired state against current (live) state.
+ *
+ * Produces an ordered list of changes: shared variables, then per-service
+ * creates/updates (variables, domains, settings, volumes), then service
+ * deletions, then buckets. Variables prefixed with `RAILWAY_` are ignored
+ * as they are managed by Railway itself.
+ *
+ * @param desired - The desired state from config.
+ * @param current - The current live state from Railway.
+ * @param deletedVars - Per-service variable names explicitly marked for deletion (via `null`).
+ * @param deletedSharedVars - Shared variable names explicitly marked for deletion.
+ * @param domainMap - Current custom domains per service (from {@link fetchCurrentState}).
+ * @param volumeMap - Current volumes per service (from {@link fetchCurrentState}).
+ * @returns A {@link Changeset} containing all changes needed to reconcile.
  */
 export function computeChangeset(
   desired: State,

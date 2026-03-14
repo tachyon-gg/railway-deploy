@@ -19,7 +19,13 @@ function normalizeDomains(domain?: string, domains?: string[]): string[] {
 }
 
 /**
- * Load an environment YAML file and resolve it into a desired State.
+ * Load an environment YAML file, resolve templates and parameters, and produce
+ * the desired {@link State} for reconciliation.
+ *
+ * @param envFilePath - Path to the environment YAML config file.
+ * @returns The desired state, deleted variable lists (for explicit `null` overrides),
+ *          and the project/environment names from the config.
+ * @throws On missing file, invalid YAML, schema validation failure, or missing template.
  */
 export function loadEnvironmentConfig(envFilePath: string): {
   state: State;

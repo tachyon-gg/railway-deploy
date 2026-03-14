@@ -39,7 +39,20 @@ function red(text: string, noColor: boolean): string {
 }
 
 /**
- * Execute a changeset against Railway, tracking successes and failures.
+ * Execute a changeset against Railway, applying each change sequentially
+ * and tracking successes and failures.
+ *
+ * Newly created service IDs are tracked so that subsequent changes (variables,
+ * domains, settings) for the same service can resolve the ID. Variable upserts
+ * use `skipDeploys` for all but the last variable change to avoid unnecessary
+ * intermediate deployments.
+ *
+ * @param client - Authenticated GraphQL client.
+ * @param changeset - The changes to apply (from {@link computeChangeset}).
+ * @param projectId - Railway project ID.
+ * @param environmentId - Railway environment ID.
+ * @param options - Optional flags for verbose output and color control.
+ * @returns Lists of successfully applied changes and failures with error messages.
  */
 export async function applyChangeset(
   client: GraphQLClient,

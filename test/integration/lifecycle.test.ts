@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect } from "bun:test";
 import {
   createService,
   deleteService,
@@ -43,16 +43,16 @@ describe("Railway Integration — service lifecycle", () => {
     });
 
     const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"].variables["FOO"]).toBe("bar");
-    expect(state.services["test-svc"].variables["BAZ"]).toBe("qux");
+    expect(state.services["test-svc"].variables.FOO).toBe("bar");
+    expect(state.services["test-svc"].variables.BAZ).toBe("qux");
   });
 
   itif(hasToken)("deletes a variable", async () => {
     await deleteVariable(client, PROJECT_ID, ENV_ID, serviceId, "BAZ");
 
     const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"].variables["BAZ"]).toBeUndefined();
-    expect(state.services["test-svc"].variables["FOO"]).toBe("bar");
+    expect(state.services["test-svc"].variables.BAZ).toBeUndefined();
+    expect(state.services["test-svc"].variables.FOO).toBe("bar");
   });
 
   itif(hasToken)("updates service instance settings", async () => {
@@ -84,13 +84,13 @@ describe("Railway Integration — shared variables", () => {
     });
 
     const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.sharedVariables["SHARED_KEY"]).toBe("shared_value");
+    expect(state.sharedVariables.SHARED_KEY).toBe("shared_value");
   });
 
   itif(hasToken)("deletes a shared variable", async () => {
     await deleteSharedVariable(client, PROJECT_ID, ENV_ID, "SHARED_KEY");
 
     const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.sharedVariables["SHARED_KEY"]).toBeUndefined();
+    expect(state.sharedVariables.SHARED_KEY).toBeUndefined();
   });
 });

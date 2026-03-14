@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { loadEnvironmentConfig } from "../../src/config/loader.js";
@@ -17,7 +17,6 @@ import {
   itif,
   PROJECT_ID,
   PROJECT_NAME,
-  SERVICES_DIR,
   setupFixtures,
 } from "./helpers.js";
 
@@ -243,8 +242,8 @@ services:
       expect(result.failed).toEqual([]);
 
       const { state: afterState } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-      expect(afterState.services["worker"]).toBeUndefined();
-      expect(afterState.services["web"]).toBeDefined();
+      expect(afterState.services.worker).toBeUndefined();
+      expect(afterState.services.web).toBeDefined();
     },
     30000,
   );

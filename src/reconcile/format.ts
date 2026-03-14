@@ -60,7 +60,12 @@ export function changeLabel(change: Change): string {
 }
 
 /**
- * Print a human-readable summary of the changeset.
+ * Print a human-readable summary of the changeset to stdout, grouped by
+ * change category (services, settings, variables, domains, volumes, buckets).
+ *
+ * Sensitive variable values (matching PASSWORD, SECRET, TOKEN, etc.) are
+ * automatically masked. In verbose mode, old and new values are shown
+ * side-by-side when `currentState` is provided.
  */
 export function printChangeset(
   changeset: Changeset,

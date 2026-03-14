@@ -153,56 +153,56 @@ describe("loadEnvironmentConfig", () => {
 
   test("resolves template params in source image", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
     expect(web.source).toEqual({ image: "ghcr.io/org/web:alpha" });
   });
 
   test("resolves template params in variables", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
-    expect(web.variables["APP_ENV"]).toBe("alpha");
+    expect(web.variables.APP_ENV).toBe("alpha");
   });
 
   test("passes through Railway ${{}} references", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
-    expect(web.variables["DB_URL"]).toBe("${{Postgres.DATABASE_URL}}");
+    expect(web.variables.DB_URL).toBe("${{Postgres.DATABASE_URL}}");
   });
 
   test("merges environment variables into template", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
     // EXTRA was added by env file
-    expect(web.variables["EXTRA"]).toBe("added");
+    expect(web.variables.EXTRA).toBe("added");
   });
 
   test("handles null variable overrides (deletions)", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
     // REPLICAS was set to null in env file, should be absent from resolved vars
     expect("REPLICAS" in web.variables).toBe(false);
     // Should appear in deletedVars
-    expect(result.deletedVars["web"]).toContain("REPLICAS");
+    expect(result.deletedVars.web).toContain("REPLICAS");
   });
 
   test("resolves domain from template params into domains array", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
     expect(web.domains).toEqual(["alpha.example.com"]);
   });
 
   test("handles inline services without templates", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
-    const redis = result.state.services["redis"];
+    const redis = result.state.services.redis;
 
     expect(redis.source).toEqual({ image: "bitnami/redis:7.4" });
-    expect(redis.variables["ALLOW_EMPTY_PASSWORD"]).toBe("yes");
+    expect(redis.variables.ALLOW_EMPTY_PASSWORD).toBe("yes");
     expect(redis.volume).toEqual({ mount: "/data", name: "redis-data" });
   });
 
@@ -223,14 +223,14 @@ describe("loadEnvironmentConfig", () => {
 
   test("loads multiple domains", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "multi-domain.yaml"));
-    const web = result.state.services["web"];
+    const web = result.state.services.web;
 
     expect(web.domains).toEqual(["app.example.com", "www.example.com"]);
   });
 
   test("loads new service settings from template and inline", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "settings.yaml"));
-    const worker = result.state.services["worker"];
+    const worker = result.state.services.worker;
 
     expect(worker.startCommand).toBe("npm run worker");
     expect(worker.buildCommand).toBe("npm run build");

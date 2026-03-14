@@ -28,12 +28,16 @@ const RegionConfigSchema = z.object({
 
 const RestartPolicySchema = z.enum(["ALWAYS", "NEVER", "ON_FAILURE"]);
 
+/** Validates individual cron fields (minute, hour, day-of-month, month, day-of-week) */
+const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
+
 const CronScheduleSchema = z.string().refine(
   (s) => {
     const parts = s.trim().split(/\s+/);
-    return parts.length === 5;
+    if (parts.length !== 5) return false;
+    return parts.every((part) => CRON_FIELD_PATTERN.test(part));
   },
-  { message: "cron_schedule must have exactly 5 fields (e.g., '*/5 * * * *')" },
+  { message: "cron_schedule must be a valid cron expression with 5 fields (e.g., '*/5 * * * *')" },
 );
 
 const DomainSchema = z.string().refine(
@@ -55,54 +59,60 @@ const BucketConfigSchema = z.object({
   name: z.string().min(1),
 });
 
-export const ServiceTemplateSchema = z.object({
-  params: z.record(z.string(), ParamDefSchema).optional(),
-  source: SourceConfigSchema.optional(),
-  variables: z.record(z.string(), z.string().nullable()).optional(),
-  domain: DomainSchema.optional(),
-  domains: z.array(DomainSchema).optional(),
-  regions: z.array(RegionConfigSchema).optional(),
-  restart_policy: RestartPolicySchema.optional(),
-  healthcheck: HealthcheckConfigSchema.optional(),
-  cron_schedule: CronScheduleSchema.optional(),
-  volume: VolumeConfigSchema.optional(),
-  start_command: z.string().optional(),
-  build_command: z.string().optional(),
-  root_directory: z.string().optional(),
-  dockerfile_path: z.string().optional(),
-  pre_deploy_command: z.string().optional(),
-  restart_policy_max_retries: z.number().int().nonnegative().optional(),
-  sleep_application: z.boolean().optional(),
-});
+export const ServiceTemplateSchema = z
+  .object({
+    params: z.record(z.string(), ParamDefSchema).optional(),
+    source: SourceConfigSchema.optional(),
+    variables: z.record(z.string(), z.string().nullable()).optional(),
+    domain: DomainSchema.optional(),
+    domains: z.array(DomainSchema).optional(),
+    regions: z.array(RegionConfigSchema).optional(),
+    restart_policy: RestartPolicySchema.optional(),
+    healthcheck: HealthcheckConfigSchema.optional(),
+    cron_schedule: CronScheduleSchema.optional(),
+    volume: VolumeConfigSchema.optional(),
+    start_command: z.string().optional(),
+    build_command: z.string().optional(),
+    root_directory: z.string().optional(),
+    dockerfile_path: z.string().optional(),
+    pre_deploy_command: z.string().optional(),
+    restart_policy_max_retries: z.number().int().nonnegative().optional(),
+    sleep_application: z.boolean().optional(),
+  })
+  .strict();
 
-const ServiceEntrySchema = z.object({
-  template: z.string().optional(),
-  params: z.record(z.string(), z.string()).optional(),
-  variables: z.record(z.string(), z.string().nullable()).optional(),
-  source: SourceConfigSchema.optional(),
-  domain: DomainSchema.optional(),
-  domains: z.array(DomainSchema).optional(),
-  volume: VolumeConfigSchema.optional(),
-  regions: z.array(RegionConfigSchema).optional(),
-  restart_policy: RestartPolicySchema.optional(),
-  healthcheck: HealthcheckConfigSchema.optional(),
-  cron_schedule: CronScheduleSchema.optional(),
-  start_command: z.string().optional(),
-  build_command: z.string().optional(),
-  root_directory: z.string().optional(),
-  dockerfile_path: z.string().optional(),
-  pre_deploy_command: z.string().optional(),
-  restart_policy_max_retries: z.number().int().nonnegative().optional(),
-  sleep_application: z.boolean().optional(),
-});
+const ServiceEntrySchema = z
+  .object({
+    template: z.string().optional(),
+    params: z.record(z.string(), z.string()).optional(),
+    variables: z.record(z.string(), z.string().nullable()).optional(),
+    source: SourceConfigSchema.optional(),
+    domain: DomainSchema.optional(),
+    domains: z.array(DomainSchema).optional(),
+    volume: VolumeConfigSchema.optional(),
+    regions: z.array(RegionConfigSchema).optional(),
+    restart_policy: RestartPolicySchema.optional(),
+    healthcheck: HealthcheckConfigSchema.optional(),
+    cron_schedule: CronScheduleSchema.optional(),
+    start_command: z.string().optional(),
+    build_command: z.string().optional(),
+    root_directory: z.string().optional(),
+    dockerfile_path: z.string().optional(),
+    pre_deploy_command: z.string().optional(),
+    restart_policy_max_retries: z.number().int().nonnegative().optional(),
+    sleep_application: z.boolean().optional(),
+  })
+  .strict();
 
-export const EnvironmentConfigSchema = z.object({
-  project: z.string().min(1, "project name is required"),
-  environment: z.string().min(1, "environment name is required"),
-  shared_variables: z.record(z.string(), z.string().nullable()).optional(),
-  services: z.record(z.string(), ServiceEntrySchema),
-  buckets: z.record(z.string(), BucketConfigSchema).optional(),
-});
+export const EnvironmentConfigSchema = z
+  .object({
+    project: z.string().min(1, "project name is required"),
+    environment: z.string().min(1, "environment name is required"),
+    shared_variables: z.record(z.string(), z.string().nullable()).optional(),
+    services: z.record(z.string(), ServiceEntrySchema),
+    buckets: z.record(z.string(), BucketConfigSchema).optional(),
+  })
+  .strict();
 
 /**
  * Validate an environment config object against the schema.

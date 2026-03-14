@@ -49,23 +49,23 @@ describe("computeChangeset", () => {
 
     const createSvc = changeset.changes.find((c) => c.type === "create-service");
     expect(createSvc).toBeDefined();
-    expect(createSvc!.type).toBe("create-service");
-    if (createSvc!.type === "create-service") {
-      expect(createSvc!.name).toBe("web");
-      expect(createSvc!.source).toEqual({ image: "nginx:latest" });
+    expect(createSvc?.type).toBe("create-service");
+    if (createSvc?.type === "create-service") {
+      expect(createSvc?.name).toBe("web");
+      expect(createSvc?.source).toEqual({ image: "nginx:latest" });
     }
 
     const upsertVars = changeset.changes.find((c) => c.type === "upsert-variables");
     expect(upsertVars).toBeDefined();
-    if (upsertVars!.type === "upsert-variables") {
-      expect(upsertVars!.variables).toEqual({ PORT: "3000" });
+    if (upsertVars?.type === "upsert-variables") {
+      expect(upsertVars?.variables).toEqual({ PORT: "3000" });
     }
 
     // Domain should be created for new service
     const createDomain = changeset.changes.find((c) => c.type === "create-domain");
     expect(createDomain).toBeDefined();
-    if (createDomain!.type === "create-domain") {
-      expect(createDomain!.domain).toBe("app.example.com");
+    if (createDomain?.type === "create-domain") {
+      expect(createDomain?.domain).toBe("app.example.com");
     }
   });
 
@@ -85,9 +85,9 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const del = changeset.changes.find((c) => c.type === "delete-service");
     expect(del).toBeDefined();
-    if (del!.type === "delete-service") {
-      expect(del!.name).toBe("old");
-      expect(del!.serviceId).toBe("svc-old");
+    if (del?.type === "delete-service") {
+      expect(del?.name).toBe("old");
+      expect(del?.serviceId).toBe("svc-old");
     }
   });
 
@@ -117,14 +117,14 @@ describe("computeChangeset", () => {
 
     const upsert = changeset.changes.find((c) => c.type === "upsert-variables");
     expect(upsert).toBeDefined();
-    if (upsert!.type === "upsert-variables") {
-      expect(upsert!.variables).toEqual({ PORT: "8080", NEW: "val" });
+    if (upsert?.type === "upsert-variables") {
+      expect(upsert?.variables).toEqual({ PORT: "8080", NEW: "val" });
     }
 
     const del = changeset.changes.find((c) => c.type === "delete-variables");
     expect(del).toBeDefined();
-    if (del!.type === "delete-variables") {
-      expect(del!.variableNames).toContain("OLD");
+    if (del?.type === "delete-variables") {
+      expect(del?.variableNames).toContain("OLD");
     }
   });
 
@@ -154,8 +154,8 @@ describe("computeChangeset", () => {
 
     const del = changeset.changes.find((c) => c.type === "delete-variables");
     expect(del).toBeDefined();
-    if (del!.type === "delete-variables") {
-      expect(del!.variableNames).toContain("EXPLICIT_DEL");
+    if (del?.type === "delete-variables") {
+      expect(del?.variableNames).toContain("EXPLICIT_DEL");
     }
   });
 
@@ -167,14 +167,14 @@ describe("computeChangeset", () => {
 
     const upsert = changeset.changes.find((c) => c.type === "upsert-shared-variables");
     expect(upsert).toBeDefined();
-    if (upsert!.type === "upsert-shared-variables") {
-      expect(upsert!.variables).toEqual({ APP: "alpha", NEW: "v" });
+    if (upsert?.type === "upsert-shared-variables") {
+      expect(upsert?.variables).toEqual({ APP: "alpha", NEW: "v" });
     }
 
     const del = changeset.changes.find((c) => c.type === "delete-shared-variables");
     expect(del).toBeDefined();
-    if (del!.type === "delete-shared-variables") {
-      expect(del!.variableNames).toContain("OLD");
+    if (del?.type === "delete-shared-variables") {
+      expect(del?.variableNames).toContain("OLD");
     }
   });
 
@@ -203,8 +203,8 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const dom = changeset.changes.find((c) => c.type === "create-domain");
     expect(dom).toBeDefined();
-    if (dom!.type === "create-domain") {
-      expect(dom!.domain).toBe("app.example.com");
+    if (dom?.type === "create-domain") {
+      expect(dom?.domain).toBe("app.example.com");
     }
   });
 
@@ -236,9 +236,9 @@ describe("computeChangeset", () => {
 
     const del = changeset.changes.find((c) => c.type === "delete-domain");
     expect(del).toBeDefined();
-    if (del!.type === "delete-domain") {
-      expect(del!.domain).toBe("old.example.com");
-      expect(del!.domainId).toBe("dom-1");
+    if (del?.type === "delete-domain") {
+      expect(del?.domain).toBe("old.example.com");
+      expect(del?.domainId).toBe("dom-1");
     }
   });
 
@@ -271,9 +271,9 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
-    if (update!.type === "update-service-settings") {
-      expect(update!.settings.source).toEqual({ image: "nginx:v2" });
-      expect(update!.settings.cronSchedule).toBe("*/10 * * * *");
+    if (update?.type === "update-service-settings") {
+      expect(update?.settings.source).toEqual({ image: "nginx:v2" });
+      expect(update?.settings.cronSchedule).toBe("*/10 * * * *");
     }
   });
 
@@ -294,9 +294,9 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const create = changeset.changes.find((c) => c.type === "create-service");
     expect(create).toBeDefined();
-    if (create!.type === "create-service") {
-      expect(create!.volume).toEqual({ mount: "/data", name: "vol" });
-      expect(create!.cronSchedule).toBe("*/5 * * * *");
+    if (create?.type === "create-service") {
+      expect(create?.volume).toEqual({ mount: "/data", name: "vol" });
+      expect(create?.cronSchedule).toBe("*/5 * * * *");
     }
   });
 
@@ -467,9 +467,9 @@ describe("computeChangeset", () => {
 
     const volDel = changeset.changes.find((c) => c.type === "delete-volume");
     expect(volDel).toBeDefined();
-    if (volDel!.type === "delete-volume") {
-      expect(volDel!.volumeId).toBe("vol-1");
-      expect(volDel!.serviceName).toBe("web");
+    if (volDel?.type === "delete-volume") {
+      expect(volDel?.volumeId).toBe("vol-1");
+      expect(volDel?.serviceName).toBe("web");
     }
   });
 
@@ -484,8 +484,8 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const create = changeset.changes.find((c) => c.type === "create-bucket");
     expect(create).toBeDefined();
-    if (create!.type === "create-bucket") {
-      expect(create!.bucketName).toBe("my-bucket");
+    if (create?.type === "create-bucket") {
+      expect(create?.bucketName).toBe("my-bucket");
     }
   });
 
@@ -530,11 +530,11 @@ describe("computeChangeset", () => {
 
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
-    if (update!.type === "update-service-settings") {
-      expect(update!.settings.startCommand).toBe("npm start");
-      expect(update!.settings.buildCommand).toBe("npm run build");
-      expect(update!.settings.restartPolicy).toBe("ON_FAILURE");
-      expect(update!.serviceId).toBe(""); // Resolved at apply time
+    if (update?.type === "update-service-settings") {
+      expect(update?.settings.startCommand).toBe("npm start");
+      expect(update?.settings.buildCommand).toBe("npm run build");
+      expect(update?.settings.restartPolicy).toBe("ON_FAILURE");
+      expect(update?.serviceId).toBe(""); // Resolved at apply time
     }
   });
 
@@ -567,11 +567,11 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
-    if (update!.type === "update-service-settings") {
-      expect(update!.settings.startCommand).toBe("npm start");
-      expect(update!.settings.buildCommand).toBe("npm run build");
-      expect(update!.settings.rootDirectory).toBe("/app");
-      expect(update!.settings.sleepApplication).toBe(true);
+    if (update?.type === "update-service-settings") {
+      expect(update?.settings.startCommand).toBe("npm start");
+      expect(update?.settings.buildCommand).toBe("npm run build");
+      expect(update?.settings.rootDirectory).toBe("/app");
+      expect(update?.settings.sleepApplication).toBe(true);
     }
   });
 });

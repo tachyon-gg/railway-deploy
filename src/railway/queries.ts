@@ -47,7 +47,18 @@ export async function resolveEnvironmentId(
 type ServiceNode = GetProjectQuery["project"]["services"]["edges"][number]["node"];
 
 /**
- * Fetch current state from Railway for a project + environment.
+ * Fetch the live state of a Railway project environment, including all services,
+ * variables, domains, volumes, and buckets.
+ *
+ * Variables are fetched in parallel for all services. If any variable fetch fails,
+ * the entire operation aborts to prevent an incomplete state from causing spurious
+ * delete-variable changes during diff.
+ *
+ * @param client - Authenticated GraphQL client.
+ * @param projectId - Railway project ID.
+ * @param environmentId - Railway environment ID.
+ * @returns The current state, plus domain and volume lookup maps keyed by service name.
+ * @throws On API errors or partial variable fetch failures.
  */
 export async function fetchCurrentState(
   client: GraphQLClient,
