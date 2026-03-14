@@ -53,3 +53,48 @@ mutation BucketCreate($input: BucketCreateInput!) {
     name
   }
 }
+
+mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
+  serviceDomainCreate(input: $input) {
+    id
+    domain
+  }
+}
+
+mutation ServiceDomainDelete($id: String!) {
+  serviceDomainDelete(id: $id)
+}
+
+mutation TcpProxyCreate($input: TCPProxyCreateInput!) {
+  tcpProxyCreate(input: $input) {
+    id
+    domain
+    proxyPort
+  }
+}
+
+mutation TcpProxyDelete($id: String!) {
+  tcpProxyDelete(id: $id)
+}
+
+mutation ServiceInstanceLimitsUpdate($input: ServiceInstanceLimitsUpdateInput!) {
+  serviceInstanceLimitsUpdate(input: $input)
+}
+
+mutation DeploymentTriggerUpdate($id: String!, $input: DeploymentTriggerUpdateInput!) {
+  deploymentTriggerUpdate(id: $id, input: $input) {
+    id
+    branch
+  }
+}
+
+mutation EgressGatewayAssociationCreate($input: EgressGatewayCreateInput!) {
+  egressGatewayAssociationCreate(input: $input) {
+    ipv4
+    region
+  }
+}
+
+mutation EgressGatewayAssociationsClear($input: EgressGatewayServiceTargetInput!) {
+  egressGatewayAssociationsClear(input: $input)
+}

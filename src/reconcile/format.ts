@@ -50,6 +50,26 @@ export function changeLabel(change: Change): string {
       return `create-volume: ${change.serviceName} (${change.mount})`;
     case "delete-volume":
       return `delete-volume: ${change.serviceName}`;
+    case "update-deployment-trigger": {
+      const parts: string[] = [];
+      if (change.branch) parts.push(`branch: ${change.branch}`);
+      if (change.checkSuites !== undefined) parts.push(`checkSuites: ${change.checkSuites}`);
+      return `update-deployment-trigger: ${change.serviceName} → ${parts.join(", ")}`;
+    }
+    case "create-service-domain":
+      return `create-service-domain: ${change.serviceName}`;
+    case "delete-service-domain":
+      return `delete-service-domain: ${change.serviceName}`;
+    case "create-tcp-proxy":
+      return `create-tcp-proxy: ${change.serviceName} (port ${change.applicationPort})`;
+    case "delete-tcp-proxy":
+      return `delete-tcp-proxy: ${change.serviceName}`;
+    case "update-service-limits":
+      return `update-service-limits: ${change.serviceName}`;
+    case "enable-static-ips":
+      return `enable-static-ips: ${change.serviceName}`;
+    case "disable-static-ips":
+      return `disable-static-ips: ${change.serviceName}`;
     case "create-bucket":
       return `create-bucket: ${change.bucketName}`;
     case "delete-bucket":
@@ -101,8 +121,19 @@ export function printChangeset(
     (c) => c.type === "create-domain" || c.type === "delete-domain",
   );
   const settingsChanges = changeset.changes.filter((c) => c.type === "update-service-settings");
+  const triggerChanges = changeset.changes.filter((c) => c.type === "update-deployment-trigger");
   const volumeCreates = changeset.changes.filter((c) => c.type === "create-volume");
   const volumeDeletes = changeset.changes.filter((c) => c.type === "delete-volume");
+  const serviceDomainChanges = changeset.changes.filter(
+    (c) => c.type === "create-service-domain" || c.type === "delete-service-domain",
+  );
+  const tcpProxyChanges = changeset.changes.filter(
+    (c) => c.type === "create-tcp-proxy" || c.type === "delete-tcp-proxy",
+  );
+  const limitsChanges = changeset.changes.filter((c) => c.type === "update-service-limits");
+  const staticIpChanges = changeset.changes.filter(
+    (c) => c.type === "enable-static-ips" || c.type === "disable-static-ips",
+  );
   const bucketCreates = changeset.changes.filter((c) => c.type === "create-bucket");
   const bucketDeletes = changeset.changes.filter((c) => c.type === "delete-bucket");
 
@@ -142,6 +173,19 @@ export function printChangeset(
             console.log(`      ${key}: ${oldStr} → ${newStr}`);
           }
         }
+      }
+    }
+    console.log();
+  }
+
+  if (triggerChanges.length > 0) {
+    console.log(`  ${yellow("~", noColor)} DEPLOYMENT TRIGGERS:`);
+    for (const c of triggerChanges) {
+      if (c.type === "update-deployment-trigger") {
+        const parts: string[] = [];
+        if (c.branch) parts.push(`branch → ${c.branch}`);
+        if (c.checkSuites !== undefined) parts.push(`checkSuites → ${c.checkSuites}`);
+        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${parts.join(", ")}`);
       }
     }
     console.log();
@@ -231,6 +275,57 @@ export function printChangeset(
     console.log();
   }
 
+  if (serviceDomainChanges.length > 0) {
+    console.log(`  ${yellow("~", noColor)} RAILWAY DOMAINS:`);
+    for (const c of serviceDomainChanges) {
+      if (c.type === "create-service-domain") {
+        const port = c.targetPort ? ` (port ${c.targetPort})` : "";
+        console.log(`    ${green("+", noColor)} ${c.serviceName}${port}`);
+      } else if (c.type === "delete-service-domain") {
+        console.log(`    ${red("-", noColor)} ${c.serviceName}`);
+      }
+    }
+    console.log();
+  }
+
+  if (tcpProxyChanges.length > 0) {
+    console.log(`  ${yellow("~", noColor)} TCP PROXIES:`);
+    for (const c of tcpProxyChanges) {
+      if (c.type === "create-tcp-proxy") {
+        console.log(`    ${green("+", noColor)} ${c.serviceName}: port ${c.applicationPort}`);
+      } else if (c.type === "delete-tcp-proxy") {
+        console.log(`    ${red("-", noColor)} ${c.serviceName}`);
+      }
+    }
+    console.log();
+  }
+
+  if (limitsChanges.length > 0) {
+    console.log(`  ${yellow("~", noColor)} RESOURCE LIMITS:`);
+    for (const c of limitsChanges) {
+      if (c.type === "update-service-limits") {
+        const parts: string[] = [];
+        if (c.limits.memoryGB !== undefined)
+          parts.push(`memory: ${c.limits.memoryGB ?? "unset"}GB`);
+        if (c.limits.vCPUs !== undefined) parts.push(`vCPUs: ${c.limits.vCPUs ?? "unset"}`);
+        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${parts.join(", ")}`);
+      }
+    }
+    console.log();
+  }
+
+  if (staticIpChanges.length > 0) {
+    console.log(`  ${yellow("~", noColor)} STATIC OUTBOUND IPS:`);
+    for (const c of staticIpChanges) {
+      if (c.type === "enable-static-ips") {
+        console.log(`    ${green("+", noColor)} ${c.serviceName}: enable`);
+      } else if (c.type === "disable-static-ips") {
+        console.log(`    ${red("-", noColor)} ${c.serviceName}: disable`);
+      }
+    }
+    console.log();
+  }
+
   if (bucketCreates.length > 0 || bucketDeletes.length > 0) {
     console.log(`  ${yellow("~", noColor)} BUCKETS:`);
     for (const c of bucketCreates) {
@@ -247,9 +342,17 @@ export function printChangeset(
   }
 
   // Summary line
-  const createCount = creates.length + volumeCreates.length + bucketCreates.length;
+  const createCount =
+    creates.length +
+    volumeCreates.length +
+    bucketCreates.length +
+    serviceDomainChanges.filter((c) => c.type === "create-service-domain").length +
+    tcpProxyChanges.filter((c) => c.type === "create-tcp-proxy").length +
+    staticIpChanges.filter((c) => c.type === "enable-static-ips").length;
   const updateCount =
     settingsChanges.length +
+    triggerChanges.length +
+    limitsChanges.length +
     upsertVars.length +
     sharedUpsert.length +
     domainChanges.filter((c) => c.type === "create-domain").length;
@@ -259,7 +362,10 @@ export function printChangeset(
     sharedDelete.length +
     volumeDeletes.length +
     bucketDeletes.length +
-    domainChanges.filter((c) => c.type === "delete-domain").length;
+    domainChanges.filter((c) => c.type === "delete-domain").length +
+    serviceDomainChanges.filter((c) => c.type === "delete-service-domain").length +
+    tcpProxyChanges.filter((c) => c.type === "delete-tcp-proxy").length +
+    staticIpChanges.filter((c) => c.type === "disable-static-ips").length;
 
   const parts: string[] = [];
   if (createCount > 0) parts.push(green(`${createCount} to create`, noColor));

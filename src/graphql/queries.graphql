@@ -18,6 +18,17 @@ query GetProject($id: String!) {
         node {
           id
           name
+          deploymentTriggers {
+            edges {
+              node {
+                id
+                branch
+                checkSuites
+                serviceId
+                repository
+              }
+            }
+          }
         }
       }
     }
@@ -38,6 +49,12 @@ query GetProject($id: String!) {
                   customDomains {
                     id
                     domain
+                    targetPort
+                  }
+                  serviceDomains {
+                    id
+                    domain
+                    targetPort
                   }
                 }
                 region
@@ -53,6 +70,12 @@ query GetProject($id: String!) {
                 dockerfilePath
                 preDeployCommand
                 sleepApplication
+                builder
+                watchPatterns
+                drainingSeconds
+                overlapSeconds
+                ipv6EgressEnabled
+                railwayConfigFile
               }
             }
           }
@@ -94,4 +117,24 @@ query GetVariables($projectId: String!, $environmentId: String!, $serviceId: Str
 
 query GetSharedVariables($projectId: String!, $environmentId: String!) {
   variables(projectId: $projectId, environmentId: $environmentId)
+}
+
+query GetTcpProxies($serviceId: String!, $environmentId: String!) {
+  tcpProxies(serviceId: $serviceId, environmentId: $environmentId) {
+    id
+    applicationPort
+    proxyPort
+    domain
+  }
+}
+
+query GetServiceInstanceLimits($serviceId: String!, $environmentId: String!) {
+  serviceInstanceLimits(serviceId: $serviceId, environmentId: $environmentId)
+}
+
+query GetEgressGateways($serviceId: String!, $environmentId: String!) {
+  egressGateways(serviceId: $serviceId, environmentId: $environmentId) {
+    ipv4
+    region
+  }
 }

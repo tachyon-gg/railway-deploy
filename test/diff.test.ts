@@ -39,7 +39,7 @@ describe("computeChangeset", () => {
           name: "web",
           source: { image: "nginx:latest" },
           variables: { PORT: "3000" },
-          domains: ["app.example.com"],
+          domains: [{ domain: "app.example.com" }],
         },
       },
     });
@@ -185,7 +185,7 @@ describe("computeChangeset", () => {
           name: "web",
           id: "svc-1",
           variables: {},
-          domains: ["app.example.com"],
+          domains: [{ domain: "app.example.com" }],
         },
       },
     });
@@ -225,7 +225,7 @@ describe("computeChangeset", () => {
           name: "web",
           id: "svc-1",
           variables: {},
-          domains: ["old.example.com"],
+          domains: [{ domain: "old.example.com" }],
         },
       },
     });
@@ -367,7 +367,7 @@ describe("computeChangeset", () => {
           name: "web",
           id: "svc-1",
           variables: {},
-          domains: ["a.example.com", "b.example.com"],
+          domains: [{ domain: "a.example.com" }, { domain: "b.example.com" }],
         },
       },
     });
@@ -377,7 +377,7 @@ describe("computeChangeset", () => {
           name: "web",
           id: "svc-1",
           variables: {},
-          domains: ["a.example.com", "c.example.com"],
+          domains: [{ domain: "a.example.com" }, { domain: "c.example.com" }],
         },
       },
     });
@@ -1034,5 +1034,880 @@ describe("computeChangeset", () => {
       expect(update?.settings.rootDirectory).toBe("/app");
       expect(update?.settings.sleepApplication).toBe(true);
     }
+  });
+
+  // --- Group 1: Scalar settings ---
+
+  test("builder change detected", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          builder: "NIXPACKS",
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          builder: "DOCKERFILE",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.builder).toBe("NIXPACKS");
+    }
+  });
+
+  test("watchPatterns change detected (uses deepEqual)", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          watchPatterns: ["src/**", "package.json"],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          watchPatterns: ["src/**"],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.watchPatterns).toEqual(["src/**", "package.json"]);
+    }
+  });
+
+  test("drainingSeconds change detected", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          drainingSeconds: 60,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          drainingSeconds: 30,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.drainingSeconds).toBe(60);
+    }
+  });
+
+  test("overlapSeconds change detected", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          overlapSeconds: 10,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          overlapSeconds: 5,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.overlapSeconds).toBe(10);
+    }
+  });
+
+  test("ipv6EgressEnabled change detected", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          ipv6EgressEnabled: true,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          ipv6EgressEnabled: false,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.ipv6EgressEnabled).toBe(true);
+    }
+  });
+
+  test("removing builder/watchPatterns/etc from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          builder: "NIXPACKS",
+          watchPatterns: ["src/**"],
+          drainingSeconds: 30,
+          overlapSeconds: 5,
+          ipv6EgressEnabled: true,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.builder).toBeNull();
+      expect(update.settings.watchPatterns).toBeNull();
+      expect(update.settings.drainingSeconds).toBeNull();
+      expect(update.settings.overlapSeconds).toBeNull();
+      expect(update.settings.ipv6EgressEnabled).toBeNull();
+    }
+  });
+
+  // --- Group 2: Branch ---
+
+  test("new service with branch includes it in create-service change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { repo: "myorg/myrepo" },
+          variables: {},
+          domains: [],
+          branch: "develop",
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const create = changeset.changes.find((c) => c.type === "create-service");
+    expect(create).toBeDefined();
+    if (create?.type === "create-service") {
+      expect(create.branch).toBe("develop");
+    }
+  });
+
+  test("existing service with changed branch generates update-deployment-trigger", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { repo: "myorg/myrepo" },
+          variables: {},
+          domains: [],
+          branch: "staging",
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { repo: "myorg/myrepo" },
+          variables: {},
+          domains: [],
+          branch: "main",
+          deploymentTriggerId: "trigger-1",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
+    expect(trigger).toBeDefined();
+    if (trigger?.type === "update-deployment-trigger") {
+      expect(trigger.branch).toBe("staging");
+      expect(trigger.serviceId).toBe("svc-1");
+      expect(trigger.triggerId).toBe("trigger-1");
+    }
+  });
+
+  test("no change when branch matches", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { repo: "myorg/myrepo" },
+          variables: {},
+          domains: [],
+          branch: "main",
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { repo: "myorg/myrepo" },
+          variables: {},
+          domains: [],
+          branch: "main",
+          deploymentTriggerId: "trigger-1",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
+    expect(trigger).toBeUndefined();
+  });
+
+  // --- Group 3: Registry credentials ---
+
+  test("new service with registryCredentials includes it in create-service", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "registry.example.com/app:latest" },
+          variables: {},
+          domains: [],
+          registryCredentials: { username: "user", password: "pass" },
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const create = changeset.changes.find((c) => c.type === "create-service");
+    expect(create).toBeDefined();
+    if (create?.type === "create-service") {
+      expect(create.registryCredentials).toEqual({ username: "user", password: "pass" });
+    }
+    // registryCredentials should NOT be duplicated in update-service-settings for new services
+    const settingsWithCreds = changeset.changes.filter(
+      (c) => c.type === "update-service-settings" && c.settings.registryCredentials !== undefined,
+    );
+    expect(settingsWithCreds).toHaveLength(0);
+  });
+
+  test("existing service with registryCredentials always generates settings update", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "registry.example.com/app:latest" },
+          variables: {},
+          domains: [],
+          registryCredentials: { username: "user", password: "pass" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "registry.example.com/app:latest" },
+          variables: {},
+          domains: [],
+          // registryCredentials not in current state (can't be read back from API)
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.registryCredentials).toEqual({ username: "user", password: "pass" });
+    }
+  });
+
+  test("no change when registryCredentials absent from both", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    expect(changeset.changes).toEqual([]);
+  });
+
+  // --- Group 4A: Domains ---
+
+  test("domain with targetPort creates domain with targetPort", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [{ domain: "app.example.com", targetPort: 8080 }],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const dom = changeset.changes.find((c) => c.type === "create-domain");
+    expect(dom).toBeDefined();
+    if (dom?.type === "create-domain") {
+      expect(dom.domain).toBe("app.example.com");
+      expect(dom.targetPort).toBe(8080);
+    }
+  });
+
+  test("domain targetPort change generates delete + create", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [{ domain: "app.example.com", targetPort: 9090 }],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [{ domain: "app.example.com", targetPort: 8080 }],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {
+      web: [{ id: "dom-1", domain: "app.example.com", targetPort: 8080 }],
+    });
+
+    const del = changeset.changes.find((c) => c.type === "delete-domain");
+    expect(del).toBeDefined();
+    if (del?.type === "delete-domain") {
+      expect(del.domain).toBe("app.example.com");
+      expect(del.domainId).toBe("dom-1");
+    }
+
+    const create = changeset.changes.find((c) => c.type === "create-domain");
+    expect(create).toBeDefined();
+    if (create?.type === "create-domain") {
+      expect(create.domain).toBe("app.example.com");
+      expect(create.targetPort).toBe(9090);
+    }
+  });
+
+  test("railway domain: desired has railway_domain, current doesn't → create-service-domain", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 3000 },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      undefined,
+      undefined,
+      undefined,
+    );
+    const create = changeset.changes.find((c) => c.type === "create-service-domain");
+    expect(create).toBeDefined();
+    if (create?.type === "create-service-domain") {
+      expect(create.serviceName).toBe("web");
+      expect(create.targetPort).toBe(3000);
+    }
+  });
+
+  test("railway domain: desired doesn't, current has one → delete-service-domain", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 3000 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      undefined,
+      { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
+      undefined,
+    );
+    const del = changeset.changes.find((c) => c.type === "delete-service-domain");
+    expect(del).toBeDefined();
+    if (del?.type === "delete-service-domain") {
+      expect(del.serviceName).toBe("web");
+      expect(del.domainId).toBe("sdom-1");
+    }
+  });
+
+  test("railway domain: both have → no change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 3000 },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 3000 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      undefined,
+      { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
+      undefined,
+    );
+    const serviceDomainChanges = changeset.changes.filter(
+      (c) => c.type === "create-service-domain" || c.type === "delete-service-domain",
+    );
+    expect(serviceDomainChanges).toEqual([]);
+  });
+
+  // --- Group 4B: TCP proxies ---
+
+  test("desired has tcp ports, current doesn't → create-tcp-proxy for each", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          tcpProxies: [5432, 6379],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {});
+    const creates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
+    expect(creates.length).toBe(2);
+    const ports = creates.map((c) => (c as { applicationPort: number }).applicationPort).sort();
+    expect(ports).toEqual([5432, 6379]);
+  });
+
+  test("current has tcp ports, desired doesn't → delete-tcp-proxy for each", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          tcpProxies: [5432, 6379],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {
+      web: [
+        { id: "tcp-1", applicationPort: 5432 },
+        { id: "tcp-2", applicationPort: 6379 },
+      ],
+    });
+    const deletes = changeset.changes.filter((c) => c.type === "delete-tcp-proxy");
+    expect(deletes.length).toBe(2);
+    const proxyIds = deletes.map((c) => (c as { proxyId: string }).proxyId).sort();
+    expect(proxyIds).toEqual(["tcp-1", "tcp-2"]);
+  });
+
+  test("mixed tcp proxies: some to create, some to delete, some matching", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          tcpProxies: [5432, 8080],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          tcpProxies: [5432, 6379],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {
+      web: [
+        { id: "tcp-1", applicationPort: 5432 },
+        { id: "tcp-2", applicationPort: 6379 },
+      ],
+    });
+
+    // 8080 should be created
+    const creates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
+    expect(creates.length).toBe(1);
+    if (creates[0].type === "create-tcp-proxy") {
+      expect(creates[0].applicationPort).toBe(8080);
+    }
+
+    // 6379 should be deleted
+    const deletes = changeset.changes.filter((c) => c.type === "delete-tcp-proxy");
+    expect(deletes.length).toBe(1);
+    if (deletes[0].type === "delete-tcp-proxy") {
+      expect(deletes[0].proxyId).toBe("tcp-2");
+    }
+  });
+
+  // --- Group 4C: Resource limits ---
+
+  test("limits change detected → update-service-limits", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          limits: { memoryGB: 4, vCPUs: 2 },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          limits: { memoryGB: 2, vCPUs: 1 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-limits");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-limits") {
+      expect(update.limits.memoryGB).toBe(4);
+      expect(update.limits.vCPUs).toBe(2);
+    }
+  });
+
+  test("no change when limits match", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          limits: { memoryGB: 2, vCPUs: 1 },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          limits: { memoryGB: 2, vCPUs: 1 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const limitsChanges = changeset.changes.filter((c) => c.type === "update-service-limits");
+    expect(limitsChanges).toEqual([]);
+  });
+
+  test("limits removal generates update-service-limits", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          limits: { memoryGB: 4, vCPUs: 2 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-limits");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-limits") {
+      expect(update.limits.memoryGB).toBeNull();
+      expect(update.limits.vCPUs).toBeNull();
+    }
+  });
+
+  // --- New service creation with all new features ---
+
+  test("new service with all new features generates correct changes", () => {
+    const desired = makeState({
+      services: {
+        api: {
+          name: "api",
+          source: { image: "registry.example.com/api:latest" },
+          variables: { PORT: "3000" },
+          domains: [{ domain: "api.example.com", targetPort: 3000 }],
+          branch: "main",
+          registryCredentials: { username: "user", password: "pass" },
+          railwayDomain: { targetPort: 3000 },
+          tcpProxies: [5432, 6379],
+          limits: { memoryGB: 4, vCPUs: 2 },
+          staticOutboundIps: true,
+          builder: "NIXPACKS",
+          watchPatterns: ["src/**"],
+          drainingSeconds: 30,
+          overlapSeconds: 5,
+          ipv6EgressEnabled: true,
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+
+    // create-service with branch and registryCredentials
+    const create = changeset.changes.find((c) => c.type === "create-service");
+    expect(create).toBeDefined();
+    if (create?.type === "create-service") {
+      expect(create.branch).toBe("main");
+      expect(create.registryCredentials).toEqual({ username: "user", password: "pass" });
+    }
+
+    // variables
+    const vars = changeset.changes.find((c) => c.type === "upsert-variables");
+    expect(vars).toBeDefined();
+
+    // custom domain with targetPort
+    const dom = changeset.changes.find((c) => c.type === "create-domain");
+    expect(dom).toBeDefined();
+    if (dom?.type === "create-domain") {
+      expect(dom.domain).toBe("api.example.com");
+      expect(dom.targetPort).toBe(3000);
+    }
+
+    // railway domain
+    const sdom = changeset.changes.find((c) => c.type === "create-service-domain");
+    expect(sdom).toBeDefined();
+    if (sdom?.type === "create-service-domain") {
+      expect(sdom.targetPort).toBe(3000);
+    }
+
+    // TCP proxies
+    const tcpCreates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
+    expect(tcpCreates.length).toBe(2);
+    const tcpPorts = tcpCreates
+      .map((c) => (c as { applicationPort: number }).applicationPort)
+      .sort();
+    expect(tcpPorts).toEqual([5432, 6379]);
+
+    // update-service-settings with new scalar settings and registryCredentials
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.builder).toBe("NIXPACKS");
+      expect(update.settings.watchPatterns).toEqual(["src/**"]);
+      expect(update.settings.drainingSeconds).toBe(30);
+      expect(update.settings.overlapSeconds).toBe(5);
+      expect(update.settings.ipv6EgressEnabled).toBe(true);
+      // registryCredentials already in create-service, not duplicated here
+      expect(update.settings.registryCredentials).toBeUndefined();
+    }
+
+    // limits for new services
+    const limitsChange = changeset.changes.find((c) => c.type === "update-service-limits");
+    expect(limitsChange).toBeDefined();
+
+    // static outbound IPs for new services
+    const staticIps = changeset.changes.find((c) => c.type === "enable-static-ips");
+    expect(staticIps).toBeDefined();
   });
 });

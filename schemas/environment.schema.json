@@ -64,13 +64,15 @@
           "$ref": "#/$defs/SourceConfig"
         },
         "domain": {
-          "type": "string",
-          "description": "Single custom domain for this service (convenience — use 'domains' for multiple). Supports %{param} and ${ENV_VAR}."
+          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/DomainWithPort" }],
+          "description": "Single custom domain for this service (convenience — use 'domains' for multiple). Supports string or object with target_port."
         },
         "domains": {
           "type": "array",
-          "description": "Custom domains for this service.",
-          "items": { "type": "string" }
+          "description": "Custom domains for this service. Each item can be a string or an object with domain and target_port.",
+          "items": {
+            "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/DomainWithPort" }]
+          }
         },
         "volume": {
           "$ref": "#/$defs/VolumeConfig"
@@ -118,7 +120,81 @@
         },
         "sleep_application": {
           "type": "boolean",
-          "description": "Enable application sleeping for cost savings."
+          "description": "Enable serverless sleeping. Containers scale to zero when idle and wake on incoming requests."
+        },
+        "builder": {
+          "type": "string",
+          "description": "Builder to use for deployments.",
+          "enum": ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"]
+        },
+        "watch_patterns": {
+          "type": "array",
+          "description": "Gitignore-style patterns to trigger deploys based on changed file paths (e.g., '/src/**', 'package.json').",
+          "items": { "type": "string" }
+        },
+        "draining_seconds": {
+          "type": "integer",
+          "description": "Time in seconds between SIGTERM and SIGKILL during deployment teardown.",
+          "minimum": 0
+        },
+        "overlap_seconds": {
+          "type": "integer",
+          "description": "Time in seconds the old deployment overlaps with the new one during blue-green deploys.",
+          "minimum": 0
+        },
+        "ipv6_egress": {
+          "type": "boolean",
+          "description": "Enable IPv6 outbound traffic for the service."
+        },
+        "branch": {
+          "type": "string",
+          "description": "GitHub branch to deploy from (e.g., 'main', 'develop'). Changes are auto-deployed from this branch."
+        },
+        "check_suites": {
+          "type": "boolean",
+          "description": "Wait for CI check suites (GitHub Actions) to complete before deploying."
+        },
+        "registry_credentials": {
+          "$ref": "#/$defs/RegistryCredentials"
+        },
+        "railway_domain": {
+          "oneOf": [
+            { "type": "boolean" },
+            {
+              "type": "object",
+              "required": ["target_port"],
+              "additionalProperties": false,
+              "properties": {
+                "target_port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Target port for the Railway-provided domain."
+                }
+              }
+            }
+          ],
+          "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port."
+        },
+        "tcp_proxy": {
+          "type": "integer",
+          "description": "Single TCP proxy application port.",
+          "minimum": 1
+        },
+        "tcp_proxies": {
+          "type": "array",
+          "description": "Multiple TCP proxy application ports.",
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "limits": {
+          "$ref": "#/$defs/LimitsConfig"
+        },
+        "railway_config_file": {
+          "type": "string",
+          "description": "Path to a railway.json or railway.toml config-as-code file in the repository."
+        },
+        "static_outbound_ips": {
+          "type": "boolean",
+          "description": "Enable static outbound IPs (egress gateways) for the service."
         }
       }
     },
@@ -201,6 +277,56 @@
           "type": "string",
           "description": "Bucket name in Railway.",
           "minLength": 1
+        }
+      }
+    },
+    "DomainWithPort": {
+      "type": "object",
+      "description": "Custom domain with optional target port.",
+      "required": ["domain"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "Domain name."
+        },
+        "target_port": {
+          "type": "integer",
+          "description": "Target port for the domain.",
+          "minimum": 1
+        }
+      }
+    },
+    "LimitsConfig": {
+      "type": "object",
+      "description": "Resource limits for the service.",
+      "additionalProperties": false,
+      "properties": {
+        "memory_gb": {
+          "type": "number",
+          "description": "Memory limit in GB.",
+          "exclusiveMinimum": 0
+        },
+        "vcpus": {
+          "type": "number",
+          "description": "vCPU limit.",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "RegistryCredentials": {
+      "type": "object",
+      "description": "Registry credentials for private container images.",
+      "required": ["username", "password"],
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Registry username. Supports ${ENV_VAR} syntax."
+        },
+        "password": {
+          "type": "string",
+          "description": "Registry password. Supports ${ENV_VAR} syntax."
         }
       }
     }
