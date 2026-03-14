@@ -18,10 +18,10 @@ export interface ServiceState {
     mount: string;
     name: string;
   };
-  regions?: Array<{
+  region?: {
     region: string;
     numReplicas: number;
-  }>;
+  };
   restartPolicy?: string;
   healthcheck?: {
     path: string;
@@ -32,7 +32,7 @@ export interface ServiceState {
   buildCommand?: string;
   rootDirectory?: string;
   dockerfilePath?: string;
-  preDeployCommand?: string;
+  preDeployCommand?: string[];
   restartPolicyMaxRetries?: number;
   sleepApplication?: boolean;
   /** Railway service ID — present only in current state from Railway */

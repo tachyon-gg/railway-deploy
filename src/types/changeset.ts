@@ -64,19 +64,27 @@ export interface UpdateServiceSettings {
   serviceName: string;
   serviceId: string;
   settings: {
-    restartPolicy?: string;
-    healthcheck?: { path: string; timeout: number };
-    cronSchedule?: string;
-    regions?: Array<{ region: string; numReplicas: number }>;
-    source?: { image?: string; repo?: string };
-    startCommand?: string;
-    buildCommand?: string;
-    rootDirectory?: string;
-    dockerfilePath?: string;
-    preDeployCommand?: string;
-    restartPolicyMaxRetries?: number;
-    sleepApplication?: boolean;
+    restartPolicy?: string | null;
+    healthcheck?: { path: string; timeout: number } | null;
+    cronSchedule?: string | null;
+    region?: { region: string; numReplicas: number } | null;
+    source?: { image?: string; repo?: string } | null;
+    startCommand?: string | null;
+    buildCommand?: string | null;
+    rootDirectory?: string | null;
+    dockerfilePath?: string | null;
+    preDeployCommand?: string[] | null;
+    restartPolicyMaxRetries?: number | null;
+    sleepApplication?: boolean | null;
   };
+}
+
+export interface CreateVolume {
+  type: "create-volume";
+  serviceName: string;
+  serviceId: string;
+  mount: string;
+  name: string;
 }
 
 export interface DeleteVolume {
@@ -108,6 +116,7 @@ export type Change =
   | CreateDomain
   | DeleteDomain
   | UpdateServiceSettings
+  | CreateVolume
   | DeleteVolume
   | CreateBucket
   | DeleteBucket;

@@ -12,7 +12,7 @@
     "rules": {
       "recommended": true,
       "style": {
-        "noNonNullAssertion": "warn",
+        "noNonNullAssertion": "error",
         "useNodejsImportProtocol": "off"
       },
       "suspicious": {

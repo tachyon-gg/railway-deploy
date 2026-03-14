@@ -44,7 +44,7 @@ export interface ServiceTemplate {
   domain?: string;
   /** Multiple domains */
   domains?: string[];
-  regions?: RegionConfig[];
+  region?: RegionConfig;
   restart_policy?: string;
   healthcheck?: HealthcheckConfig;
   cron_schedule?: string;
@@ -53,7 +53,7 @@ export interface ServiceTemplate {
   build_command?: string;
   root_directory?: string;
   dockerfile_path?: string;
-  pre_deploy_command?: string;
+  pre_deploy_command?: string | string[];
   restart_policy_max_retries?: number;
   sleep_application?: boolean;
 }
@@ -74,8 +74,8 @@ export interface ServiceEntry {
   domains?: string[];
   /** Inline volume (when no template) */
   volume?: VolumeConfig;
-  /** Inline regions (when no template) */
-  regions?: RegionConfig[];
+  /** Inline region */
+  region?: RegionConfig;
   /** Inline restart policy */
   restart_policy?: string;
   /** Inline healthcheck */
@@ -91,7 +91,7 @@ export interface ServiceEntry {
   /** Inline Dockerfile path */
   dockerfile_path?: string;
   /** Inline pre-deploy command */
-  pre_deploy_command?: string;
+  pre_deploy_command?: string | string[];
   /** Inline restart policy max retries */
   restart_policy_max_retries?: number;
   /** Inline sleep application */

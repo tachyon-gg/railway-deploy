@@ -145,7 +145,7 @@ function resolveService(
   // Start with template values, expand params
   let source = template?.source ? expandParamsDeep(template.source, params) : entry.source;
   const volume = template?.volume ? expandParamsDeep(template.volume, params) : entry.volume;
-  const regions = template?.regions ? expandParamsDeep(template.regions, params) : entry.regions;
+  const region = template?.region ? expandParamsDeep(template.region, params) : entry.region;
   const restartPolicy = template?.restart_policy
     ? expandParamsDeep(template.restart_policy, params)
     : entry.restart_policy;
@@ -214,11 +214,12 @@ function resolveService(
 
   if (source) service.source = source;
   if (volume) service.volume = { mount: volume.mount, name: volume.name };
-  if (regions)
-    service.regions = regions.map((r) => ({
-      region: r.region,
-      numReplicas: r.num_replicas ?? DEFAULT_NUM_REPLICAS,
-    }));
+  if (region) {
+    service.region = {
+      region: region.region,
+      numReplicas: region.num_replicas ?? DEFAULT_NUM_REPLICAS,
+    };
+  }
   if (restartPolicy) service.restartPolicy = restartPolicy;
   if (healthcheck)
     service.healthcheck = {
@@ -230,7 +231,11 @@ function resolveService(
   if (buildCommand) service.buildCommand = buildCommand;
   if (rootDirectory) service.rootDirectory = rootDirectory;
   if (dockerfilePath) service.dockerfilePath = dockerfilePath;
-  if (preDeployCommand) service.preDeployCommand = preDeployCommand;
+  if (preDeployCommand) {
+    service.preDeployCommand = Array.isArray(preDeployCommand)
+      ? preDeployCommand
+      : [preDeployCommand];
+  }
   if (restartPolicyMaxRetries !== undefined)
     service.restartPolicyMaxRetries = restartPolicyMaxRetries;
   if (sleepApplication !== undefined) service.sleepApplication = sleepApplication;

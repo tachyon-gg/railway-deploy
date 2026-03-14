@@ -508,6 +508,467 @@ describe("computeChangeset", () => {
     expect(bucketChanges).toEqual([]);
   });
 
+  test("detects volume mount change (delete + create)", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/new-data", name: "vol" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    );
+
+    const volDel = changeset.changes.find((c) => c.type === "delete-volume");
+    expect(volDel).toBeDefined();
+    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
+    expect(volCreate).toBeDefined();
+    if (volCreate?.type === "create-volume") {
+      expect(volCreate.mount).toBe("/new-data");
+    }
+  });
+
+  test("detects volume name change (delete + create)", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "new-vol" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    );
+
+    const volDel = changeset.changes.find((c) => c.type === "delete-volume");
+    expect(volDel).toBeDefined();
+    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
+    expect(volCreate).toBeDefined();
+    if (volCreate?.type === "create-volume") {
+      expect(volCreate.name).toBe("new-vol");
+    }
+  });
+
+  test("no volume change when volume matches", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(
+      desired,
+      current,
+      {},
+      [],
+      {},
+      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    );
+
+    const volChanges = changeset.changes.filter(
+      (c) => c.type === "delete-volume" || c.type === "create-volume",
+    );
+    expect(volChanges).toEqual([]);
+  });
+
+  test("adds volume when desired has volume but current doesn't", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+
+    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
+    expect(volCreate).toBeDefined();
+    if (volCreate?.type === "create-volume") {
+      expect(volCreate.mount).toBe("/data");
+      expect(volCreate.name).toBe("vol");
+    }
+  });
+
+  test("removing healthcheck from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          // No healthcheck in desired
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          healthcheck: { path: "/health", timeout: 300 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.healthcheck).toBeNull();
+    }
+  });
+
+  test("removing restartPolicy from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          restartPolicy: "ALWAYS",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.restartPolicy).toBeNull();
+    }
+  });
+
+  test("removing source from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          source: { image: "nginx:latest" },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.source).toBeNull();
+    }
+  });
+
+  test("removing cronSchedule from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          cronSchedule: "*/5 * * * *",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.cronSchedule).toBeNull();
+    }
+  });
+
+  test("removing startCommand from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          startCommand: "npm start",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.startCommand).toBeNull();
+    }
+  });
+
+  test("removing region from config generates null clear", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          region: { region: "us-east-1", numReplicas: 1 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.region).toBeNull();
+    }
+  });
+
+  test("no changes when both desired and current lack optional fields", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    expect(changeset.changes).toEqual([]);
+  });
+
+  test("detects dockerfilePath change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          dockerfilePath: "Dockerfile.prod",
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          dockerfilePath: "Dockerfile",
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.dockerfilePath).toBe("Dockerfile.prod");
+    }
+  });
+
+  test("preDeployCommand compared as array with deepEqual", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          preDeployCommand: ["npm run migrate"],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          preDeployCommand: ["npm run migrate"],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    expect(changeset.changes).toEqual([]);
+  });
+
+  test("preDeployCommand change detected when arrays differ", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          preDeployCommand: ["npm run migrate", "npm run seed"],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          preDeployCommand: ["npm run migrate"],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.preDeployCommand).toEqual(["npm run migrate", "npm run seed"]);
+    }
+  });
+
   test("new service includes settings in update-service-settings change", () => {
     const desired = makeState({
       services: {

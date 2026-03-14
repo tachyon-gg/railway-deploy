@@ -79,7 +79,7 @@ export function computeChangeset(
       const newSvcSettings: UpdateServiceSettings["settings"] = {};
       if (desiredSvc.restartPolicy) newSvcSettings.restartPolicy = desiredSvc.restartPolicy;
       if (desiredSvc.healthcheck) newSvcSettings.healthcheck = desiredSvc.healthcheck;
-      if (desiredSvc.regions) newSvcSettings.regions = desiredSvc.regions;
+      if (desiredSvc.region) newSvcSettings.region = desiredSvc.region;
       if (desiredSvc.startCommand !== undefined)
         newSvcSettings.startCommand = desiredSvc.startCommand;
       if (desiredSvc.buildCommand !== undefined)
@@ -221,68 +221,50 @@ function diffServiceSettings(
 
   const settings: UpdateServiceSettings["settings"] = {};
 
-  // Compare source (order-independent)
-  if (desired.source && !deepEqual(desired.source, current.source)) {
-    settings.source = desired.source;
+  // For every field: if desired differs from current, record the change.
+  // If desired is absent but current has a value, record null (clear it).
+  if (!deepEqual(desired.source, current.source)) {
+    settings.source = desired.source ?? null;
   }
-
-  // Compare restart policy
-  if (desired.restartPolicy && desired.restartPolicy !== current.restartPolicy) {
-    settings.restartPolicy = desired.restartPolicy;
+  if (desired.restartPolicy !== current.restartPolicy) {
+    settings.restartPolicy = desired.restartPolicy ?? null;
   }
-
-  // Compare healthcheck (order-independent)
-  if (desired.healthcheck && !deepEqual(desired.healthcheck, current.healthcheck)) {
-    settings.healthcheck = desired.healthcheck;
+  if (!deepEqual(desired.healthcheck, current.healthcheck)) {
+    settings.healthcheck = desired.healthcheck ?? null;
   }
-
-  // Compare cron schedule
-  if (desired.cronSchedule && desired.cronSchedule !== current.cronSchedule) {
-    settings.cronSchedule = desired.cronSchedule;
+  if (desired.cronSchedule !== current.cronSchedule) {
+    settings.cronSchedule = desired.cronSchedule ?? null;
   }
-
-  // Compare regions (order-independent)
-  if (desired.regions && !deepEqual(desired.regions, current.regions)) {
-    settings.regions = desired.regions;
+  if (!deepEqual(desired.region, current.region)) {
+    settings.region = desired.region ?? null;
   }
-
-  // Compare new service settings
-  if (desired.startCommand !== undefined && desired.startCommand !== current.startCommand) {
-    settings.startCommand = desired.startCommand;
+  if (desired.startCommand !== current.startCommand) {
+    settings.startCommand = desired.startCommand ?? null;
   }
-  if (desired.buildCommand !== undefined && desired.buildCommand !== current.buildCommand) {
-    settings.buildCommand = desired.buildCommand;
+  if (desired.buildCommand !== current.buildCommand) {
+    settings.buildCommand = desired.buildCommand ?? null;
   }
-  if (desired.rootDirectory !== undefined && desired.rootDirectory !== current.rootDirectory) {
-    settings.rootDirectory = desired.rootDirectory;
+  if (desired.rootDirectory !== current.rootDirectory) {
+    settings.rootDirectory = desired.rootDirectory ?? null;
   }
-  if (desired.dockerfilePath !== undefined && desired.dockerfilePath !== current.dockerfilePath) {
-    settings.dockerfilePath = desired.dockerfilePath;
+  if (desired.dockerfilePath !== current.dockerfilePath) {
+    settings.dockerfilePath = desired.dockerfilePath ?? null;
   }
-  if (
-    desired.preDeployCommand !== undefined &&
-    desired.preDeployCommand !== current.preDeployCommand
-  ) {
-    settings.preDeployCommand = desired.preDeployCommand;
+  if (!deepEqual(desired.preDeployCommand, current.preDeployCommand)) {
+    settings.preDeployCommand = desired.preDeployCommand ?? null;
   }
-  if (
-    desired.restartPolicyMaxRetries !== undefined &&
-    desired.restartPolicyMaxRetries !== current.restartPolicyMaxRetries
-  ) {
-    settings.restartPolicyMaxRetries = desired.restartPolicyMaxRetries;
+  if (desired.restartPolicyMaxRetries !== current.restartPolicyMaxRetries) {
+    settings.restartPolicyMaxRetries = desired.restartPolicyMaxRetries ?? null;
   }
-  if (
-    desired.sleepApplication !== undefined &&
-    desired.sleepApplication !== current.sleepApplication
-  ) {
-    settings.sleepApplication = desired.sleepApplication;
+  if (desired.sleepApplication !== current.sleepApplication) {
+    settings.sleepApplication = desired.sleepApplication ?? null;
   }
 
   if (Object.keys(settings).length > 0) {
     changes.push({
       type: "update-service-settings",
       serviceName: desired.name,
-      serviceId: current.id!,
+      serviceId: current.id ?? "",
       settings,
     });
   }
@@ -338,6 +320,39 @@ function diffVolume(
       serviceName,
       serviceId: current.id,
       volumeId: currentVolume.volumeId,
+    });
+  }
+
+  // Volume update: both exist but differ (Railway doesn't support in-place update, so delete + create)
+  if (desired.volume && currentVolume && current.id) {
+    if (
+      desired.volume.mount !== currentVolume.mount ||
+      desired.volume.name !== currentVolume.name
+    ) {
+      changes.push({
+        type: "delete-volume",
+        serviceName,
+        serviceId: current.id,
+        volumeId: currentVolume.volumeId,
+      });
+      changes.push({
+        type: "create-volume",
+        serviceName,
+        serviceId: current.id,
+        mount: desired.volume.mount,
+        name: desired.volume.name,
+      });
+    }
+  }
+
+  // Volume addition: desired has volume but current doesn't
+  if (desired.volume && !currentVolume && current.id) {
+    changes.push({
+      type: "create-volume",
+      serviceName,
+      serviceId: current.id,
+      mount: desired.volume.mount,
+      name: desired.volume.name,
     });
   }
 }

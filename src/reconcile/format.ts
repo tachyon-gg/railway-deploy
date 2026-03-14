@@ -46,6 +46,8 @@ export function changeLabel(change: Change): string {
       return `delete-domain: ${change.serviceName} → ${change.domain}`;
     case "update-service-settings":
       return `update-settings: ${change.serviceName} (${Object.keys(change.settings).join(", ")})`;
+    case "create-volume":
+      return `create-volume: ${change.serviceName} (${change.mount})`;
     case "delete-volume":
       return `delete-volume: ${change.serviceName}`;
     case "create-bucket":
@@ -99,6 +101,7 @@ export function printChangeset(
     (c) => c.type === "create-domain" || c.type === "delete-domain",
   );
   const settingsChanges = changeset.changes.filter((c) => c.type === "update-service-settings");
+  const volumeCreates = changeset.changes.filter((c) => c.type === "create-volume");
   const volumeDeletes = changeset.changes.filter((c) => c.type === "delete-volume");
   const bucketCreates = changeset.changes.filter((c) => c.type === "create-bucket");
   const bucketDeletes = changeset.changes.filter((c) => c.type === "delete-bucket");
@@ -135,7 +138,7 @@ export function printChangeset(
             const currentSvc = options?.currentState?.services[c.serviceName];
             const oldVal = currentSvc ? (currentSvc as Record<string, unknown>)[key] : undefined;
             const oldStr = oldVal !== undefined ? JSON.stringify(oldVal) : "(unset)";
-            const newStr = JSON.stringify(value);
+            const newStr = value === null ? "(unset)" : JSON.stringify(value);
             console.log(`      ${key}: ${oldStr} → ${newStr}`);
           }
         }
@@ -213,8 +216,13 @@ export function printChangeset(
     console.log();
   }
 
-  if (volumeDeletes.length > 0) {
-    console.log(`  ${red("-", noColor)} DELETE volumes:`);
+  if (volumeCreates.length > 0 || volumeDeletes.length > 0) {
+    console.log(`  ${yellow("~", noColor)} VOLUMES:`);
+    for (const c of volumeCreates) {
+      if (c.type === "create-volume") {
+        console.log(`    ${green("+", noColor)} ${c.serviceName}: ${c.mount}`);
+      }
+    }
     for (const c of volumeDeletes) {
       if (c.type === "delete-volume") {
         console.log(`    ${red("-", noColor)} ${c.serviceName}`);
@@ -239,7 +247,7 @@ export function printChangeset(
   }
 
   // Summary line
-  const createCount = creates.length + bucketCreates.length;
+  const createCount = creates.length + volumeCreates.length + bucketCreates.length;
   const updateCount =
     settingsChanges.length +
     upsertVars.length +

@@ -137,6 +137,77 @@ buckets:
     name: media-uploads
 `,
   );
+
+  // Write a template with invalid YAML content
+  writeFileSync(join(SERVICES_DIR, "bad-yaml.yaml"), "{{{{not yaml at all");
+
+  // Write an environment file that references the bad YAML template
+  writeFileSync(
+    join(ENVS_DIR, "bad-template-yaml.yaml"),
+    `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/bad-yaml.yaml
+`,
+  );
+
+  // Write an environment file with region config
+  writeFileSync(
+    join(ENVS_DIR, "region.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    region:
+      region: us-west-2
+      num_replicas: 3
+`,
+  );
+
+  // Write an environment file with healthcheck config
+  writeFileSync(
+    join(ENVS_DIR, "healthcheck.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    healthcheck:
+      path: /health
+      timeout: 60
+`,
+  );
+
+  // Write a template with an invalid/unknown field
+  writeFileSync(
+    join(SERVICES_DIR, "invalid-field.yaml"),
+    `
+source:
+  image: nginx:latest
+unknown_field: "foo"
+`,
+  );
+
+  // Write an environment file that references the invalid-field template
+  writeFileSync(
+    join(ENVS_DIR, "invalid-template-field.yaml"),
+    `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/invalid-field.yaml
+`,
+  );
 });
 
 afterAll(() => {
@@ -236,7 +307,7 @@ describe("loadEnvironmentConfig", () => {
     expect(worker.buildCommand).toBe("npm run build");
     expect(worker.rootDirectory).toBe("/packages/worker");
     expect(worker.sleepApplication).toBe(true);
-    expect(worker.preDeployCommand).toBe("npm run migrate");
+    expect(worker.preDeployCommand).toEqual(["npm run migrate"]);
   });
 
   test("loads bucket config into state", () => {
@@ -308,5 +379,72 @@ services:
     );
 
     expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-restart.yaml"))).toThrow();
+  });
+
+  test("throws on invalid YAML in template file", () => {
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-template-yaml.yaml"))).toThrow(
+      "Invalid YAML in template",
+    );
+  });
+
+  test("loads region with num_replicas", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "region.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.region).toEqual({
+      region: "us-west-2",
+      numReplicas: 3,
+    });
+  });
+
+  test("loads healthcheck with timeout", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "healthcheck.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.healthcheck).toEqual({
+      path: "/health",
+      timeout: 60,
+    });
+  });
+
+  test("throws on invalid service template with unknown field", () => {
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "invalid-template-field.yaml"))).toThrow(
+      "Invalid service template",
+    );
+  });
+
+  test("throws on invalid cron schedule", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-cron.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    cron_schedule: "not a cron"
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-cron.yaml"))).toThrow();
+  });
+
+  test("accepts valid cron schedule", () => {
+    writeFileSync(
+      join(ENVS_DIR, "good-cron.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  worker:
+    source:
+      image: nginx:latest
+    cron_schedule: "*/5 * * * *"
+`,
+    );
+
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "good-cron.yaml"));
+    expect(result.state.services.worker.cronSchedule).toBe("*/5 * * * *");
   });
 });

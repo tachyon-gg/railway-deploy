@@ -1,6 +1,7 @@
 # railway-deploy
 
 [![CI](https://github.com/tachyon-gg/railway-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/tachyon-gg/railway-deploy/actions/workflows/ci.yml)
+[![Integration Tests](https://github.com/tachyon-gg/railway-deploy/actions/workflows/integration.yml/badge.svg)](https://github.com/tachyon-gg/railway-deploy/actions/workflows/integration.yml)
 [![codecov](https://codecov.io/gh/tachyon-gg/railway-deploy/graph/badge.svg)](https://codecov.io/gh/tachyon-gg/railway-deploy)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1)](https://bun.sh/)

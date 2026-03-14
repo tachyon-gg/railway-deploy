@@ -146,7 +146,12 @@ async function run(configPath: string, opts: CliOptions) {
     // Check for destructive operations and prompt for confirmation
     const hasDestructive = changeset.changes.some(
       (c) =>
-        c.type === "delete-service" || c.type === "delete-volume" || c.type === "delete-bucket",
+        c.type === "delete-service" ||
+        c.type === "delete-volume" ||
+        c.type === "delete-bucket" ||
+        c.type === "delete-domain" ||
+        c.type === "delete-variables" ||
+        c.type === "delete-shared-variables",
     );
 
     if (hasDestructive && !opts.yes) {
@@ -155,7 +160,7 @@ async function run(configPath: string, opts: CliOptions) {
       );
       if (!ok) {
         console.log("Aborted.");
-        process.exit(0);
+        process.exit(2);
       }
     }
 

@@ -190,18 +190,33 @@ async function applyChange(
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
       const input: ServiceInstanceUpdateInput = {};
-      if (change.settings.source) input.source = change.settings.source;
-      if (change.settings.restartPolicy)
+      if (change.settings.source !== undefined) {
+        input.source = change.settings.source;
+      }
+      if (change.settings.restartPolicy !== undefined) {
         input.restartPolicyType = change.settings
           .restartPolicy as ServiceInstanceUpdateInput["restartPolicyType"];
-      if (change.settings.healthcheck) {
-        input.healthcheckPath = change.settings.healthcheck.path;
-        input.healthcheckTimeout = change.settings.healthcheck.timeout;
       }
-      if (change.settings.cronSchedule) input.cronSchedule = change.settings.cronSchedule;
-      if (change.settings.regions?.[0]) {
-        input.region = change.settings.regions[0].region;
-        input.numReplicas = change.settings.regions[0].numReplicas;
+      if (change.settings.healthcheck !== undefined) {
+        if (change.settings.healthcheck) {
+          input.healthcheckPath = change.settings.healthcheck.path;
+          input.healthcheckTimeout = change.settings.healthcheck.timeout;
+        } else {
+          input.healthcheckPath = null;
+          input.healthcheckTimeout = null;
+        }
+      }
+      if (change.settings.cronSchedule !== undefined) {
+        input.cronSchedule = change.settings.cronSchedule;
+      }
+      if (change.settings.region !== undefined) {
+        if (change.settings.region) {
+          input.region = change.settings.region.region;
+          input.numReplicas = change.settings.region.numReplicas;
+        } else {
+          input.region = null;
+          input.numReplicas = null;
+        }
       }
       if (change.settings.startCommand !== undefined)
         input.startCommand = change.settings.startCommand;
@@ -212,13 +227,22 @@ async function applyChange(
       if (change.settings.dockerfilePath !== undefined)
         input.dockerfilePath = change.settings.dockerfilePath;
       if (change.settings.preDeployCommand !== undefined)
-        input.preDeployCommand = [change.settings.preDeployCommand];
+        input.preDeployCommand = change.settings.preDeployCommand;
       if (change.settings.restartPolicyMaxRetries !== undefined)
         input.restartPolicyMaxRetries = change.settings.restartPolicyMaxRetries;
       if (change.settings.sleepApplication !== undefined)
         input.sleepApplication = change.settings.sleepApplication;
 
       await updateServiceInstance(client, serviceId, environmentId, input);
+      break;
+    }
+
+    case "create-volume": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await createVolume(client, projectId, serviceId, environmentId, change.mount);
       break;
     }
 

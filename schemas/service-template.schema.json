@@ -54,17 +54,14 @@
       "description": "Custom domains for this service.",
       "items": { "type": "string" }
     },
-    "regions": {
-      "type": "array",
-      "description": "Deployment regions.",
-      "items": {
-        "type": "object",
-        "required": ["region"],
-        "additionalProperties": false,
-        "properties": {
-          "region": { "type": "string", "minLength": 1 },
-          "num_replicas": { "type": "integer", "minimum": 1 }
-        }
+    "region": {
+      "type": "object",
+      "description": "Deployment region.",
+      "required": ["region"],
+      "additionalProperties": false,
+      "properties": {
+        "region": { "type": "string", "minLength": 1 },
+        "num_replicas": { "type": "integer", "minimum": 1 }
       }
     },
     "restart_policy": {
@@ -119,8 +116,8 @@
       "description": "Path to a custom Dockerfile."
     },
     "pre_deploy_command": {
-      "type": "string",
-      "description": "Pre-deploy command (e.g., DB migrations)."
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
+      "description": "Pre-deploy command(s) (e.g., DB migrations). Accepts a string or array of strings."
     },
     "restart_policy_max_retries": {
       "type": "integer",

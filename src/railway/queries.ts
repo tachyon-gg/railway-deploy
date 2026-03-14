@@ -209,12 +209,10 @@ function buildServiceState(
     state.source = { ...state.source, repo: instance.source.repo };
   }
   if (instance.region) {
-    state.regions = [
-      {
-        region: instance.region,
-        numReplicas: instance.numReplicas ?? DEFAULT_NUM_REPLICAS,
-      },
-    ];
+    state.region = {
+      region: instance.region,
+      numReplicas: instance.numReplicas ?? DEFAULT_NUM_REPLICAS,
+    };
   }
   if (instance.restartPolicyType) {
     state.restartPolicy = instance.restartPolicyType;
@@ -244,9 +242,9 @@ function buildServiceState(
     // Railway returns preDeployCommand as JSON (string or string[])
     const pdc = instance.preDeployCommand;
     if (typeof pdc === "string") {
-      state.preDeployCommand = pdc;
+      state.preDeployCommand = [pdc];
     } else if (Array.isArray(pdc) && pdc.length > 0) {
-      state.preDeployCommand = pdc.filter(Boolean).join(" && ");
+      state.preDeployCommand = pdc;
     }
   }
   if (instance.restartPolicyMaxRetries !== undefined && instance.restartPolicyMaxRetries !== null) {

@@ -75,10 +75,9 @@
         "volume": {
           "$ref": "#/$defs/VolumeConfig"
         },
-        "regions": {
-          "type": "array",
-          "description": "Deployment regions.",
-          "items": { "$ref": "#/$defs/RegionConfig" }
+        "region": {
+          "$ref": "#/$defs/RegionConfig",
+          "description": "Deployment region."
         },
         "restart_policy": {
           "type": "string",
@@ -109,8 +108,8 @@
           "description": "Path to a custom Dockerfile."
         },
         "pre_deploy_command": {
-          "type": "string",
-          "description": "Command to run before deployment (e.g., DB migrations)."
+          "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
+          "description": "Command(s) to run before deployment (e.g., DB migrations). Accepts a string or array of strings."
         },
         "restart_policy_max_retries": {
           "type": "integer",

@@ -5,11 +5,11 @@ import { createClient } from "../../src/railway/client.js";
 import { deleteService, deleteSharedVariable } from "../../src/railway/mutations.js";
 import { fetchCurrentState } from "../../src/railway/queries.js";
 
-export const TOKEN = process.env.RAILWAY_TOKEN;
-export const PROJECT_ID = process.env.RAILWAY_TEST_PROJECT_ID!;
-export const PROJECT_NAME = process.env.RAILWAY_TEST_PROJECT_NAME!;
-export const ENV_NAME = process.env.RAILWAY_TEST_ENV_NAME!;
-export const ENV_ID = process.env.RAILWAY_TEST_ENV_ID!;
+export const TOKEN = process.env.RAILWAY_TOKEN ?? "";
+export const PROJECT_ID = process.env.RAILWAY_TEST_PROJECT_ID ?? "";
+export const PROJECT_NAME = process.env.RAILWAY_TEST_PROJECT_NAME ?? "";
+export const ENV_NAME = process.env.RAILWAY_TEST_ENV_NAME ?? "";
+export const ENV_ID = process.env.RAILWAY_TEST_ENV_ID ?? "";
 
 export const hasToken = !!TOKEN;
 export const itif = (cond: boolean) => (cond ? test : test.skip);
@@ -18,7 +18,7 @@ export let client: GraphQLClient;
 
 export function initClient() {
   if (hasToken) {
-    client = createClient(TOKEN!);
+    client = createClient(TOKEN);
   }
 }
 
