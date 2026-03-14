@@ -162,7 +162,7 @@ function resolveService(
 
   // Resolve params if template has param defs
   // service_name is a built-in param — always set to the service's config key
-  if (entry.params?.service_name || template?.params?.service_name) {
+  if ("service_name" in (entry.params ?? {}) || "service_name" in (template?.params ?? {})) {
     throw new Error(
       `"service_name" is a built-in parameter and cannot be overridden (service "${name}")`,
     );
