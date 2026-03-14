@@ -49,9 +49,7 @@ export interface ServiceTemplate {
   params?: Record<string, ParamDef>;
   source?: SourceConfig;
   variables?: Record<string, string | null>;
-  /** Singular domain (convenience — normalized to domains[]) */
-  domain?: DomainEntry;
-  /** Multiple domains */
+  /** Custom domains */
   domains?: DomainEntry[];
   region?: RegionConfig;
   restart_policy?: string;
@@ -75,9 +73,7 @@ export interface ServiceTemplate {
   registry_credentials?: { username: string; password: string };
   /** Railway-provided domain */
   railway_domain?: boolean | { target_port: number };
-  /** TCP proxy (single port) */
-  tcp_proxy?: number;
-  /** TCP proxies (multiple ports) */
+  /** TCP proxies */
   tcp_proxies?: number[];
   /** Resource limits */
   limits?: LimitsConfig;
@@ -97,9 +93,7 @@ export interface ServiceEntry {
   variables?: Record<string, string | null>;
   /** Inline source (when no template) */
   source?: SourceConfig;
-  /** Singular domain (convenience — normalized to domains[]) */
-  domain?: DomainEntry;
-  /** Multiple domains */
+  /** Custom domains */
   domains?: DomainEntry[];
   /** Inline volume (when no template) */
   volume?: VolumeConfig;
@@ -143,9 +137,7 @@ export interface ServiceEntry {
   registry_credentials?: { username: string; password: string };
   /** Railway-provided domain */
   railway_domain?: boolean | { target_port: number };
-  /** TCP proxy (single port) */
-  tcp_proxy?: number;
-  /** TCP proxies (multiple ports) */
+  /** TCP proxies */
   tcp_proxies?: number[];
   /** Resource limits */
   limits?: LimitsConfig;

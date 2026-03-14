@@ -63,10 +63,6 @@
         "source": {
           "$ref": "#/$defs/SourceConfig"
         },
-        "domain": {
-          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/DomainWithPort" }],
-          "description": "Single custom domain for this service (convenience — use 'domains' for multiple). Supports string or object with target_port."
-        },
         "domains": {
           "type": "array",
           "description": "Custom domains for this service. Each item can be a string or an object with domain and target_port.",
@@ -174,11 +170,6 @@
             }
           ],
           "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port."
-        },
-        "tcp_proxy": {
-          "type": "integer",
-          "description": "Single TCP proxy application port.",
-          "minimum": 1
         },
         "tcp_proxies": {
           "type": "array",
