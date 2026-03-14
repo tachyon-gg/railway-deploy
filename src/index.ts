@@ -113,6 +113,8 @@ async function run(configPath: string, opts: CliOptions) {
     state: currentState,
     domainMap,
     volumeMap,
+    serviceDomainMap,
+    tcpProxyMap,
   } = await fetchCurrentState(client, projectId, environmentId);
 
   console.log(`Found ${Object.keys(currentState.services).length} existing service(s)`);
@@ -125,6 +127,8 @@ async function run(configPath: string, opts: CliOptions) {
     deletedSharedVars,
     domainMap,
     volumeMap,
+    serviceDomainMap,
+    tcpProxyMap,
   );
 
   const noColor = opts.noColor ?? false;
@@ -151,7 +155,10 @@ async function run(configPath: string, opts: CliOptions) {
         c.type === "delete-bucket" ||
         c.type === "delete-domain" ||
         c.type === "delete-variables" ||
-        c.type === "delete-shared-variables",
+        c.type === "delete-shared-variables" ||
+        c.type === "delete-service-domain" ||
+        c.type === "delete-tcp-proxy" ||
+        c.type === "disable-static-ips",
     );
 
     if (hasDestructive && !opts.yes) {

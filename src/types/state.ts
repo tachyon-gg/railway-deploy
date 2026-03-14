@@ -13,7 +13,7 @@ export interface ServiceState {
     repo?: string;
   };
   variables: Record<string, string>;
-  domains: string[];
+  domains: Array<{ domain: string; targetPort?: number }>;
   volume?: {
     mount: string;
     name: string;
@@ -35,6 +35,25 @@ export interface ServiceState {
   preDeployCommand?: string[];
   restartPolicyMaxRetries?: number;
   sleepApplication?: boolean;
+  builder?: string;
+  watchPatterns?: string[];
+  drainingSeconds?: number;
+  overlapSeconds?: number;
+  ipv6EgressEnabled?: boolean;
+  branch?: string;
+  checkSuites?: boolean;
+  deploymentTriggerId?: string;
+  registryCredentials?: { username: string; password: string };
+  /** Railway-provided domain configuration */
+  railwayDomain?: { targetPort?: number };
+  /** TCP proxy application ports */
+  tcpProxies?: number[];
+  /** Resource limits */
+  limits?: { memoryGB?: number; vCPUs?: number };
+  /** Railway config file path */
+  railwayConfigFile?: string;
+  /** Static outbound IPs enabled */
+  staticOutboundIps?: boolean;
   /** Railway service ID — present only in current state from Railway */
   id?: string;
 }

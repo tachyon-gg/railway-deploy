@@ -137,6 +137,66 @@ describe("changeLabel", () => {
     };
     expect(changeLabel(change)).toBe("delete-bucket: old-bucket");
   });
+
+  test("update-deployment-trigger", () => {
+    const change: Change = {
+      type: "update-deployment-trigger",
+      serviceName: "web",
+      serviceId: "svc-1",
+      triggerId: "trigger-1",
+      branch: "develop",
+    };
+    expect(changeLabel(change)).toBe("update-deployment-trigger: web → branch: develop");
+  });
+
+  test("create-service-domain", () => {
+    const change: Change = {
+      type: "create-service-domain",
+      serviceName: "web",
+      serviceId: "svc-1",
+    };
+    expect(changeLabel(change)).toBe("create-service-domain: web");
+  });
+
+  test("delete-service-domain", () => {
+    const change: Change = {
+      type: "delete-service-domain",
+      serviceName: "web",
+      serviceId: "svc-1",
+      domainId: "svcdom-1",
+    };
+    expect(changeLabel(change)).toBe("delete-service-domain: web");
+  });
+
+  test("create-tcp-proxy", () => {
+    const change: Change = {
+      type: "create-tcp-proxy",
+      serviceName: "db",
+      serviceId: "svc-db",
+      applicationPort: 5432,
+    };
+    expect(changeLabel(change)).toBe("create-tcp-proxy: db (port 5432)");
+  });
+
+  test("delete-tcp-proxy", () => {
+    const change: Change = {
+      type: "delete-tcp-proxy",
+      serviceName: "db",
+      serviceId: "svc-db",
+      proxyId: "proxy-1",
+    };
+    expect(changeLabel(change)).toBe("delete-tcp-proxy: db");
+  });
+
+  test("update-service-limits", () => {
+    const change: Change = {
+      type: "update-service-limits",
+      serviceName: "web",
+      serviceId: "svc-1",
+      limits: { memoryGB: 8, vCPUs: 4 },
+    };
+    expect(changeLabel(change)).toBe("update-service-limits: web");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -418,6 +478,94 @@ describe("printChangeset", () => {
     const output = allOutput();
     expect(output).toContain("OLD_SHARED");
     expect(output).toContain("DEPRECATED");
+  });
+
+  test("prints deployment trigger changes", () => {
+    const changeset: Changeset = {
+      changes: [
+        {
+          type: "update-deployment-trigger",
+          serviceName: "api",
+          serviceId: "svc-1",
+          triggerId: "trig-1",
+          branch: "develop",
+        },
+      ],
+    };
+    printChangeset(changeset, { noColor: true });
+    const output = allOutput();
+    expect(output).toContain("DEPLOYMENT TRIGGERS");
+    expect(output).toContain("api");
+    expect(output).toContain("develop");
+  });
+
+  test("prints railway domain changes", () => {
+    const changeset: Changeset = {
+      changes: [
+        {
+          type: "create-service-domain",
+          serviceName: "web",
+          serviceId: "svc-1",
+          targetPort: 8080,
+        },
+        {
+          type: "delete-service-domain",
+          serviceName: "old",
+          serviceId: "svc-2",
+          domainId: "dom-1",
+        },
+      ],
+    };
+    printChangeset(changeset, { noColor: true });
+    const output = allOutput();
+    expect(output).toContain("RAILWAY DOMAINS");
+    expect(output).toContain("web");
+    expect(output).toContain("port 8080");
+    expect(output).toContain("old");
+  });
+
+  test("prints TCP proxy changes", () => {
+    const changeset: Changeset = {
+      changes: [
+        {
+          type: "create-tcp-proxy",
+          serviceName: "db",
+          serviceId: "svc-1",
+          applicationPort: 5432,
+        },
+        {
+          type: "delete-tcp-proxy",
+          serviceName: "cache",
+          serviceId: "svc-2",
+          proxyId: "proxy-1",
+        },
+      ],
+    };
+    printChangeset(changeset, { noColor: true });
+    const output = allOutput();
+    expect(output).toContain("TCP PROXIES");
+    expect(output).toContain("db");
+    expect(output).toContain("port 5432");
+    expect(output).toContain("cache");
+  });
+
+  test("prints resource limits changes", () => {
+    const changeset: Changeset = {
+      changes: [
+        {
+          type: "update-service-limits",
+          serviceName: "api",
+          serviceId: "svc-1",
+          limits: { memoryGB: 8, vCPUs: 4 },
+        },
+      ],
+    };
+    printChangeset(changeset, { noColor: true });
+    const output = allOutput();
+    expect(output).toContain("RESOURCE LIMITS");
+    expect(output).toContain("api");
+    expect(output).toContain("memory: 8GB");
+    expect(output).toContain("vCPUs: 4");
   });
 
   test("delete-variables prints service name and variable names", () => {

@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { parse as parseYaml } from "yaml";
-import type { EnvironmentConfig, ServiceEntry, ServiceTemplate } from "../types/config.js";
+import type {
+  DomainEntry,
+  EnvironmentConfig,
+  ServiceEntry,
+  ServiceTemplate,
+} from "../types/config.js";
 import type { ServiceState, State } from "../types/state.js";
 import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
 import { expandParamsDeep, resolveParams } from "./params.js";
@@ -9,12 +14,33 @@ import { validateEnvironmentConfig, validateServiceTemplate } from "./schema.js"
 import { getDeletedVariables, resolveEnvVarString, resolveEnvVars } from "./variables.js";
 
 /**
- * Normalize singular `domain` and plural `domains` into a single string[].
+ * Normalize a single DomainEntry to { domain, targetPort? }.
  */
-function normalizeDomains(domain?: string, domains?: string[]): string[] {
-  const result: string[] = [];
-  if (domains) result.push(...domains);
-  if (domain && !result.includes(domain)) result.push(domain);
+function normalizeDomainEntry(entry: DomainEntry): { domain: string; targetPort?: number } {
+  if (typeof entry === "string") {
+    return { domain: entry };
+  }
+  return {
+    domain: entry.domain,
+    ...(entry.target_port !== undefined ? { targetPort: entry.target_port } : {}),
+  };
+}
+
+/**
+ * Normalize singular `domain` and plural `domains` into a single array.
+ */
+function normalizeDomains(
+  domain?: DomainEntry,
+  domains?: DomainEntry[],
+): Array<{ domain: string; targetPort?: number }> {
+  const result: Array<{ domain: string; targetPort?: number }> = [];
+  if (domains) result.push(...domains.map(normalizeDomainEntry));
+  if (domain) {
+    const normalized = normalizeDomainEntry(domain);
+    if (!result.some((d) => d.domain === normalized.domain)) {
+      result.push(normalized);
+    }
+  }
   return result;
 }
 
@@ -173,14 +199,35 @@ function resolveService(
   const restartPolicyMaxRetries =
     template?.restart_policy_max_retries ?? entry.restart_policy_max_retries;
   const sleepApplication = template?.sleep_application ?? entry.sleep_application;
+  const builder = template?.builder ? expandParamsDeep(template.builder, params) : entry.builder;
+  const watchPatterns = template?.watch_patterns
+    ? expandParamsDeep(template.watch_patterns, params)
+    : entry.watch_patterns;
+  const drainingSeconds = template?.draining_seconds ?? entry.draining_seconds;
+  const overlapSeconds = template?.overlap_seconds ?? entry.overlap_seconds;
+  const ipv6Egress = template?.ipv6_egress ?? entry.ipv6_egress;
+  const branch = template?.branch ? expandParamsDeep(template.branch, params) : entry.branch;
+  const checkSuites = template?.check_suites ?? entry.check_suites;
+  const registryCredentials = template?.registry_credentials ?? entry.registry_credentials;
+  const railwayDomain = template?.railway_domain ?? entry.railway_domain;
+  const tcpProxy = template?.tcp_proxy ?? entry.tcp_proxy;
+  const tcpProxies = template?.tcp_proxies ?? entry.tcp_proxies;
+  const limits = template?.limits ?? entry.limits;
+  const railwayConfigFile = template?.railway_config_file
+    ? expandParamsDeep(template.railway_config_file, params)
+    : entry.railway_config_file;
+  const staticOutboundIps = template?.static_outbound_ips ?? entry.static_outbound_ips;
 
   // Normalize domains from template and entry
-  let templateDomains: string[] = [];
+  let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
   if (template) {
-    templateDomains = normalizeDomains(
-      template.domain ? expandParamsDeep(template.domain, params) : undefined,
-      template.domains ? expandParamsDeep(template.domains, params) : undefined,
-    );
+    const tplDomain = template.domain
+      ? (expandParamsDeep(template.domain, params) as DomainEntry)
+      : undefined;
+    const tplDomains = template.domains
+      ? (expandParamsDeep(template.domains, params) as DomainEntry[])
+      : undefined;
+    templateDomains = normalizeDomains(tplDomain, tplDomains);
   }
   const entryDomains = normalizeDomains(entry.domain, entry.domains);
 
@@ -203,8 +250,19 @@ function resolveService(
   // Resolve ${ENV_VAR} in variables
   const resolvedVars = resolveEnvVars(mergedVars);
 
-  // Resolve ${ENV_VAR} in domains if present, and deduplicate
-  const resolvedDomains = [...new Set(domains.map((d) => resolveEnvVarString(d)))];
+  // Resolve ${ENV_VAR} in domains if present, and deduplicate by domain name
+  const resolvedDomainsRaw = domains.map((d) => ({
+    domain: resolveEnvVarString(d.domain),
+    ...(d.targetPort !== undefined ? { targetPort: d.targetPort } : {}),
+  }));
+  const seenDomains = new Set<string>();
+  const resolvedDomains: Array<{ domain: string; targetPort?: number }> = [];
+  for (const d of resolvedDomainsRaw) {
+    if (!seenDomains.has(d.domain)) {
+      seenDomains.add(d.domain);
+      resolvedDomains.push(d);
+    }
+  }
 
   const service: ServiceState = {
     name,
@@ -239,6 +297,40 @@ function resolveService(
   if (restartPolicyMaxRetries !== undefined)
     service.restartPolicyMaxRetries = restartPolicyMaxRetries;
   if (sleepApplication !== undefined) service.sleepApplication = sleepApplication;
+  if (builder) service.builder = builder;
+  if (watchPatterns) service.watchPatterns = watchPatterns;
+  if (drainingSeconds !== undefined) service.drainingSeconds = drainingSeconds;
+  if (overlapSeconds !== undefined) service.overlapSeconds = overlapSeconds;
+  if (ipv6Egress !== undefined) service.ipv6EgressEnabled = ipv6Egress;
+  if (branch) service.branch = branch;
+  if (checkSuites !== undefined) service.checkSuites = checkSuites;
+  if (registryCredentials) {
+    service.registryCredentials = {
+      username: resolveEnvVarString(registryCredentials.username),
+      password: resolveEnvVarString(registryCredentials.password),
+    };
+  }
+  if (railwayDomain !== undefined) {
+    if (railwayDomain === true) {
+      service.railwayDomain = {};
+    } else if (typeof railwayDomain === "object") {
+      service.railwayDomain = { targetPort: railwayDomain.target_port };
+    }
+    // railwayDomain === false means no railway domain (don't set)
+  }
+  // Normalize tcp_proxy / tcp_proxies into tcpProxies
+  const allTcpPorts: number[] = [];
+  if (tcpProxies) allTcpPorts.push(...tcpProxies);
+  if (tcpProxy !== undefined && !allTcpPorts.includes(tcpProxy)) allTcpPorts.push(tcpProxy);
+  if (allTcpPorts.length > 0) service.tcpProxies = allTcpPorts;
+  if (limits) {
+    service.limits = {
+      ...(limits.memory_gb !== undefined ? { memoryGB: limits.memory_gb } : {}),
+      ...(limits.vcpus !== undefined ? { vCPUs: limits.vcpus } : {}),
+    };
+  }
+  if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
+  if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
 
   return { service, deleted };
 }

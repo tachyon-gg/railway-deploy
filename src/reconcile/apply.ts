@@ -1,16 +1,24 @@
 import type { GraphQLClient } from "graphql-request";
 import type { ServiceInstanceUpdateInput } from "../generated/graphql.js";
 import {
+  clearEgressGateways,
   createBucket,
   createCustomDomain,
+  createEgressGateway,
   createService,
+  createServiceDomain,
+  createTcpProxy,
   createVolume,
   deleteCustomDomain,
   deleteService,
+  deleteServiceDomain,
   deleteSharedVariable,
+  deleteTcpProxy,
   deleteVariable,
   deleteVolume,
+  updateDeploymentTrigger,
   updateServiceInstance,
+  updateServiceInstanceLimits,
   upsertSharedVariables,
   upsertVariables,
 } from "../railway/mutations.js";
@@ -111,6 +119,8 @@ async function applyChange(
         change.name,
         change.source,
         environmentId,
+        change.branch,
+        change.registryCredentials,
       );
       createdServiceIds.set(change.name, result.id);
 
@@ -176,7 +186,14 @@ async function applyChange(
       if (!serviceId) {
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
-      await createCustomDomain(client, projectId, serviceId, environmentId, change.domain);
+      await createCustomDomain(
+        client,
+        projectId,
+        serviceId,
+        environmentId,
+        change.domain,
+        change.targetPort,
+      );
       break;
     }
 
@@ -232,6 +249,20 @@ async function applyChange(
         input.restartPolicyMaxRetries = change.settings.restartPolicyMaxRetries;
       if (change.settings.sleepApplication !== undefined)
         input.sleepApplication = change.settings.sleepApplication;
+      if (change.settings.builder !== undefined)
+        input.builder = change.settings.builder as ServiceInstanceUpdateInput["builder"];
+      if (change.settings.watchPatterns !== undefined)
+        input.watchPatterns = change.settings.watchPatterns;
+      if (change.settings.drainingSeconds !== undefined)
+        input.drainingSeconds = change.settings.drainingSeconds;
+      if (change.settings.overlapSeconds !== undefined)
+        input.overlapSeconds = change.settings.overlapSeconds;
+      if (change.settings.ipv6EgressEnabled !== undefined)
+        input.ipv6EgressEnabled = change.settings.ipv6EgressEnabled;
+      if (change.settings.registryCredentials !== undefined)
+        input.registryCredentials = change.settings.registryCredentials;
+      if (change.settings.railwayConfigFile !== undefined)
+        input.railwayConfigFile = change.settings.railwayConfigFile;
 
       await updateServiceInstance(client, serviceId, environmentId, input);
       break;
@@ -252,6 +283,57 @@ async function applyChange(
 
     case "create-bucket":
       await createBucket(client, projectId, change.bucketName);
+      break;
+
+    case "update-deployment-trigger": {
+      const triggerInput: import("../generated/graphql.js").DeploymentTriggerUpdateInput = {};
+      if (change.branch) triggerInput.branch = change.branch;
+      if (change.checkSuites !== undefined) triggerInput.checkSuites = change.checkSuites;
+      await updateDeploymentTrigger(client, change.triggerId, triggerInput);
+      break;
+    }
+
+    case "create-service-domain": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await createServiceDomain(client, serviceId, environmentId, change.targetPort);
+      break;
+    }
+
+    case "delete-service-domain":
+      await deleteServiceDomain(client, change.domainId);
+      break;
+
+    case "create-tcp-proxy": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await createTcpProxy(client, serviceId, environmentId, change.applicationPort);
+      break;
+    }
+
+    case "delete-tcp-proxy":
+      await deleteTcpProxy(client, change.proxyId);
+      break;
+
+    case "update-service-limits": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await updateServiceInstanceLimits(client, serviceId, environmentId, change.limits);
+      break;
+    }
+
+    case "enable-static-ips":
+      await createEgressGateway(client, change.serviceId, environmentId);
+      break;
+
+    case "disable-static-ips":
+      await clearEgressGateways(client, change.serviceId, environmentId);
       break;
 
     case "delete-bucket":

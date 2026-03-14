@@ -28,6 +28,13 @@ const RegionConfigSchema = z.object({
 
 const RestartPolicySchema = z.enum(["ALWAYS", "NEVER", "ON_FAILURE"]);
 
+const BuilderSchema = z.enum(["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"]);
+
+const RegistryCredentialsSchema = z.object({
+  username: z.string(),
+  password: z.string(),
+});
+
 /** Validates individual cron fields (minute, hour, day-of-month, month, day-of-week) */
 const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
 
@@ -50,6 +57,22 @@ const DomainSchema = z.string().refine(
   { message: "invalid domain format" },
 );
 
+const DomainEntrySchema = z.union([
+  DomainSchema,
+  z.object({ domain: DomainSchema, target_port: z.number().int().positive().optional() }),
+]);
+
+const RailwayDomainSchema = z
+  .union([z.boolean(), z.object({ target_port: z.number().int().positive() })])
+  .optional();
+
+const LimitsConfigSchema = z
+  .object({
+    memory_gb: z.number().positive().optional(),
+    vcpus: z.number().positive().optional(),
+  })
+  .optional();
+
 const ParamDefSchema = z.object({
   required: z.boolean().optional(),
   default: z.string().optional(),
@@ -64,8 +87,8 @@ export const ServiceTemplateSchema = z
     params: z.record(z.string(), ParamDefSchema).optional(),
     source: SourceConfigSchema.optional(),
     variables: z.record(z.string(), z.string().nullable()).optional(),
-    domain: DomainSchema.optional(),
-    domains: z.array(DomainSchema).optional(),
+    domain: DomainEntrySchema.optional(),
+    domains: z.array(DomainEntrySchema).optional(),
     region: RegionConfigSchema.optional(),
     restart_policy: RestartPolicySchema.optional(),
     healthcheck: HealthcheckConfigSchema.optional(),
@@ -78,6 +101,20 @@ export const ServiceTemplateSchema = z
     pre_deploy_command: z.union([z.string(), z.array(z.string())]).optional(),
     restart_policy_max_retries: z.number().int().nonnegative().optional(),
     sleep_application: z.boolean().optional(),
+    builder: BuilderSchema.optional(),
+    watch_patterns: z.array(z.string()).optional(),
+    draining_seconds: z.number().int().nonnegative().optional(),
+    overlap_seconds: z.number().int().nonnegative().optional(),
+    ipv6_egress: z.boolean().optional(),
+    branch: z.string().optional(),
+    check_suites: z.boolean().optional(),
+    registry_credentials: RegistryCredentialsSchema.optional(),
+    railway_domain: RailwayDomainSchema,
+    tcp_proxy: z.number().int().positive().optional(),
+    tcp_proxies: z.array(z.number().int().positive()).optional(),
+    limits: LimitsConfigSchema,
+    railway_config_file: z.string().optional(),
+    static_outbound_ips: z.boolean().optional(),
   })
   .strict();
 
@@ -87,8 +124,8 @@ const ServiceEntrySchema = z
     params: z.record(z.string(), z.string()).optional(),
     variables: z.record(z.string(), z.string().nullable()).optional(),
     source: SourceConfigSchema.optional(),
-    domain: DomainSchema.optional(),
-    domains: z.array(DomainSchema).optional(),
+    domain: DomainEntrySchema.optional(),
+    domains: z.array(DomainEntrySchema).optional(),
     volume: VolumeConfigSchema.optional(),
     region: RegionConfigSchema.optional(),
     restart_policy: RestartPolicySchema.optional(),
@@ -101,6 +138,20 @@ const ServiceEntrySchema = z
     pre_deploy_command: z.union([z.string(), z.array(z.string())]).optional(),
     restart_policy_max_retries: z.number().int().nonnegative().optional(),
     sleep_application: z.boolean().optional(),
+    builder: BuilderSchema.optional(),
+    watch_patterns: z.array(z.string()).optional(),
+    draining_seconds: z.number().int().nonnegative().optional(),
+    overlap_seconds: z.number().int().nonnegative().optional(),
+    ipv6_egress: z.boolean().optional(),
+    branch: z.string().optional(),
+    check_suites: z.boolean().optional(),
+    registry_credentials: RegistryCredentialsSchema.optional(),
+    railway_domain: RailwayDomainSchema,
+    tcp_proxy: z.number().int().positive().optional(),
+    tcp_proxies: z.array(z.number().int().positive()).optional(),
+    limits: LimitsConfigSchema,
+    railway_config_file: z.string().optional(),
+    static_outbound_ips: z.boolean().optional(),
   })
   .strict();
 

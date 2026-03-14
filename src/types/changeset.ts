@@ -12,6 +12,8 @@ export interface CreateService {
     name: string;
   };
   cronSchedule?: string;
+  branch?: string;
+  registryCredentials?: { username: string; password: string };
 }
 
 export interface DeleteService {
@@ -49,6 +51,7 @@ export interface CreateDomain {
   serviceName: string;
   serviceId?: string;
   domain: string;
+  targetPort?: number;
 }
 
 export interface DeleteDomain {
@@ -76,6 +79,13 @@ export interface UpdateServiceSettings {
     preDeployCommand?: string[] | null;
     restartPolicyMaxRetries?: number | null;
     sleepApplication?: boolean | null;
+    builder?: string | null;
+    watchPatterns?: string[] | null;
+    drainingSeconds?: number | null;
+    overlapSeconds?: number | null;
+    ipv6EgressEnabled?: boolean | null;
+    registryCredentials?: { username: string; password: string };
+    railwayConfigFile?: string | null;
   };
 }
 
@@ -92,6 +102,62 @@ export interface DeleteVolume {
   serviceName: string;
   serviceId: string;
   volumeId: string;
+}
+
+export interface UpdateDeploymentTrigger {
+  type: "update-deployment-trigger";
+  serviceName: string;
+  serviceId: string;
+  triggerId: string;
+  branch?: string;
+  checkSuites?: boolean;
+}
+
+export interface CreateServiceDomain {
+  type: "create-service-domain";
+  serviceName: string;
+  serviceId?: string;
+  targetPort?: number;
+}
+
+export interface DeleteServiceDomain {
+  type: "delete-service-domain";
+  serviceName: string;
+  serviceId?: string;
+  domainId: string;
+}
+
+export interface CreateTcpProxy {
+  type: "create-tcp-proxy";
+  serviceName: string;
+  serviceId?: string;
+  applicationPort: number;
+}
+
+export interface DeleteTcpProxy {
+  type: "delete-tcp-proxy";
+  serviceName: string;
+  serviceId?: string;
+  proxyId: string;
+}
+
+export interface UpdateServiceLimits {
+  type: "update-service-limits";
+  serviceName: string;
+  serviceId: string;
+  limits: { memoryGB?: number | null; vCPUs?: number | null };
+}
+
+export interface EnableStaticIps {
+  type: "enable-static-ips";
+  serviceName: string;
+  serviceId: string;
+}
+
+export interface DisableStaticIps {
+  type: "disable-static-ips";
+  serviceName: string;
+  serviceId: string;
 }
 
 export interface CreateBucket {
@@ -118,6 +184,14 @@ export type Change =
   | UpdateServiceSettings
   | CreateVolume
   | DeleteVolume
+  | UpdateDeploymentTrigger
+  | CreateServiceDomain
+  | DeleteServiceDomain
+  | CreateTcpProxy
+  | DeleteTcpProxy
+  | UpdateServiceLimits
+  | EnableStaticIps
+  | DisableStaticIps
   | CreateBucket
   | DeleteBucket;
 

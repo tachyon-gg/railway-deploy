@@ -187,6 +187,140 @@ services:
 `,
   );
 
+  // Write an environment file with builder, watch_patterns, draining/overlap, ipv6
+  writeFileSync(
+    join(ENVS_DIR, "new-settings.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    builder: NIXPACKS
+    watch_patterns:
+      - "src/**"
+      - "package.json"
+    draining_seconds: 30
+    overlap_seconds: 10
+    ipv6_egress: true
+`,
+  );
+
+  // Write an environment file with branch
+  writeFileSync(
+    join(ENVS_DIR, "branch.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      repo: github.com/org/app
+    branch: develop
+`,
+  );
+
+  // Write an environment file with railway_domain: true
+  writeFileSync(
+    join(ENVS_DIR, "railway-domain-bool.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    railway_domain: true
+`,
+  );
+
+  // Write an environment file with railway_domain object
+  writeFileSync(
+    join(ENVS_DIR, "railway-domain-obj.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    railway_domain:
+      target_port: 8080
+`,
+  );
+
+  // Write an environment file with tcp_proxy (singular)
+  writeFileSync(
+    join(ENVS_DIR, "tcp-proxy-single.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  db:
+    source:
+      image: postgres:16
+    tcp_proxy: 5432
+`,
+  );
+
+  // Write an environment file with tcp_proxies (plural)
+  writeFileSync(
+    join(ENVS_DIR, "tcp-proxies-multi.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  db:
+    source:
+      image: postgres:16
+    tcp_proxies:
+      - 5432
+      - 6379
+`,
+  );
+
+  // Write an environment file with limits
+  writeFileSync(
+    join(ENVS_DIR, "limits.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    limits:
+      memory_gb: 8
+      vcpus: 4
+`,
+  );
+
+  // Write an environment file with domain objects (target_port)
+  writeFileSync(
+    join(ENVS_DIR, "domain-objects.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    domains:
+      - domain: app.example.com
+        target_port: 3000
+      - api.example.com
+`,
+  );
+
   // Write a template with an invalid/unknown field
   writeFileSync(
     join(SERVICES_DIR, "invalid-field.yaml"),
@@ -265,7 +399,7 @@ describe("loadEnvironmentConfig", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "alpha.yaml"));
     const web = result.state.services.web;
 
-    expect(web.domains).toEqual(["alpha.example.com"]);
+    expect(web.domains).toEqual([{ domain: "alpha.example.com" }]);
   });
 
   test("handles inline services without templates", () => {
@@ -296,7 +430,7 @@ describe("loadEnvironmentConfig", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "multi-domain.yaml"));
     const web = result.state.services.web;
 
-    expect(web.domains).toEqual(["app.example.com", "www.example.com"]);
+    expect(web.domains).toEqual([{ domain: "app.example.com" }, { domain: "www.example.com" }]);
   });
 
   test("loads new service settings from template and inline", () => {
@@ -446,5 +580,68 @@ services:
 
     const result = loadEnvironmentConfig(join(ENVS_DIR, "good-cron.yaml"));
     expect(result.state.services.worker.cronSchedule).toBe("*/5 * * * *");
+  });
+
+  test("loads builder, watch_patterns, draining_seconds, overlap_seconds, ipv6_egress", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "new-settings.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.builder).toBe("NIXPACKS");
+    expect(web.watchPatterns).toEqual(["src/**", "package.json"]);
+    expect(web.drainingSeconds).toBe(30);
+    expect(web.overlapSeconds).toBe(10);
+    expect(web.ipv6EgressEnabled).toBe(true);
+  });
+
+  test("loads branch from config", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "branch.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.branch).toBe("develop");
+  });
+
+  test("loads railway_domain: true as railwayDomain: {}", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "railway-domain-bool.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.railwayDomain).toEqual({});
+  });
+
+  test("loads railway_domain object with target_port as railwayDomain with targetPort", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "railway-domain-obj.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.railwayDomain).toEqual({ targetPort: 8080 });
+  });
+
+  test("loads tcp_proxy (singular) into tcpProxies array", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "tcp-proxy-single.yaml"));
+    const db = result.state.services.db;
+
+    expect(db.tcpProxies).toEqual([5432]);
+  });
+
+  test("loads tcp_proxies (plural) into tcpProxies array", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "tcp-proxies-multi.yaml"));
+    const db = result.state.services.db;
+
+    expect(db.tcpProxies).toEqual([5432, 6379]);
+  });
+
+  test("loads limits with memory_gb and vcpus", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "limits.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.limits).toEqual({ memoryGB: 8, vCPUs: 4 });
+  });
+
+  test("loads domain objects with target_port into domains array with targetPort", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "domain-objects.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.domains).toEqual([
+      { domain: "app.example.com", targetPort: 3000 },
+      { domain: "api.example.com" },
+    ]);
   });
 });

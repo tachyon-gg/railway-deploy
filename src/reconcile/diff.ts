@@ -30,8 +30,10 @@ export function computeChangeset(
   current: State,
   deletedVars: Record<string, string[]>,
   deletedSharedVars: string[],
-  domainMap: Record<string, Array<{ id: string; domain: string }>>,
+  domainMap: Record<string, Array<{ id: string; domain: string; targetPort?: number }>>,
   volumeMap?: Record<string, { volumeId: string; mount: string; name: string }>,
+  serviceDomainMap?: Record<string, { id: string; domain: string }>,
+  tcpProxyMap?: Record<string, Array<{ id: string; applicationPort: number }>>,
 ): Changeset {
   const changes: Change[] = [];
 
@@ -55,6 +57,8 @@ export function computeChangeset(
         source: desiredSvc.source,
         volume: desiredSvc.volume,
         cronSchedule: desiredSvc.cronSchedule,
+        branch: desiredSvc.branch,
+        registryCredentials: desiredSvc.registryCredentials,
       });
 
       // Set all variables for new service
@@ -67,12 +71,33 @@ export function computeChangeset(
       }
 
       // Add domains
-      for (const domain of desiredSvc.domains) {
+      for (const d of desiredSvc.domains) {
         changes.push({
           type: "create-domain",
           serviceName: name,
-          domain,
+          domain: d.domain,
+          ...(d.targetPort !== undefined ? { targetPort: d.targetPort } : {}),
         });
+      }
+
+      // Add railway domain for new service
+      if (desiredSvc.railwayDomain) {
+        changes.push({
+          type: "create-service-domain",
+          serviceName: name,
+          targetPort: desiredSvc.railwayDomain.targetPort,
+        });
+      }
+
+      // Add TCP proxies for new service
+      if (desiredSvc.tcpProxies) {
+        for (const port of desiredSvc.tcpProxies) {
+          changes.push({
+            type: "create-tcp-proxy",
+            serviceName: name,
+            applicationPort: port,
+          });
+        }
       }
 
       // Apply service settings that aren't part of create-service
@@ -94,6 +119,19 @@ export function computeChangeset(
         newSvcSettings.restartPolicyMaxRetries = desiredSvc.restartPolicyMaxRetries;
       if (desiredSvc.sleepApplication !== undefined)
         newSvcSettings.sleepApplication = desiredSvc.sleepApplication;
+      if (desiredSvc.builder !== undefined) newSvcSettings.builder = desiredSvc.builder;
+      if (desiredSvc.watchPatterns !== undefined)
+        newSvcSettings.watchPatterns = desiredSvc.watchPatterns;
+      if (desiredSvc.drainingSeconds !== undefined)
+        newSvcSettings.drainingSeconds = desiredSvc.drainingSeconds;
+      if (desiredSvc.overlapSeconds !== undefined)
+        newSvcSettings.overlapSeconds = desiredSvc.overlapSeconds;
+      if (desiredSvc.ipv6EgressEnabled !== undefined)
+        newSvcSettings.ipv6EgressEnabled = desiredSvc.ipv6EgressEnabled;
+      if (desiredSvc.registryCredentials)
+        newSvcSettings.registryCredentials = desiredSvc.registryCredentials;
+      if (desiredSvc.railwayConfigFile !== undefined)
+        newSvcSettings.railwayConfigFile = desiredSvc.railwayConfigFile;
       if (Object.keys(newSvcSettings).length > 0) {
         changes.push({
           type: "update-service-settings",
@@ -108,6 +146,34 @@ export function computeChangeset(
       diffVariables(name, desiredSvc, currentSvc, deletedVars[name] || [], changes);
       diffDomains(name, desiredSvc, currentSvc, domainMap[name] || [], changes);
       diffVolume(name, desiredSvc, currentSvc, volumeMap?.[name], changes);
+      diffServiceDomain(name, desiredSvc, currentSvc, serviceDomainMap?.[name], changes);
+      diffTcpProxies(name, desiredSvc, currentSvc, tcpProxyMap?.[name] || [], changes);
+      diffServiceLimits(name, desiredSvc, currentSvc, changes);
+
+      // Branch / checkSuites (deployment trigger) diff
+      if (
+        (desiredSvc.branch && desiredSvc.branch !== currentSvc.branch) ||
+        (desiredSvc.checkSuites !== undefined && desiredSvc.checkSuites !== currentSvc.checkSuites)
+      ) {
+        if (currentSvc.id && currentSvc.deploymentTriggerId) {
+          changes.push({
+            type: "update-deployment-trigger",
+            serviceName: name,
+            serviceId: currentSvc.id,
+            triggerId: currentSvc.deploymentTriggerId,
+            ...(desiredSvc.branch && desiredSvc.branch !== currentSvc.branch
+              ? { branch: desiredSvc.branch }
+              : {}),
+            ...(desiredSvc.checkSuites !== undefined &&
+            desiredSvc.checkSuites !== currentSvc.checkSuites
+              ? { checkSuites: desiredSvc.checkSuites }
+              : {}),
+          });
+        }
+      }
+
+      // Static outbound IPs diff
+      diffStaticOutboundIps(name, desiredSvc, currentSvc, changes);
     }
   }
 
@@ -259,6 +325,29 @@ function diffServiceSettings(
   if (desired.sleepApplication !== current.sleepApplication) {
     settings.sleepApplication = desired.sleepApplication ?? null;
   }
+  // Group 1 fields
+  if (desired.builder !== current.builder) {
+    settings.builder = desired.builder ?? null;
+  }
+  if (!deepEqual(desired.watchPatterns, current.watchPatterns)) {
+    settings.watchPatterns = desired.watchPatterns ?? null;
+  }
+  if (desired.drainingSeconds !== current.drainingSeconds) {
+    settings.drainingSeconds = desired.drainingSeconds ?? null;
+  }
+  if (desired.overlapSeconds !== current.overlapSeconds) {
+    settings.overlapSeconds = desired.overlapSeconds ?? null;
+  }
+  if (desired.ipv6EgressEnabled !== current.ipv6EgressEnabled) {
+    settings.ipv6EgressEnabled = desired.ipv6EgressEnabled ?? null;
+  }
+  // Group 3: registry credentials (can't diff — always include if desired has them)
+  if (desired.registryCredentials) {
+    settings.registryCredentials = desired.registryCredentials;
+  }
+  if (desired.railwayConfigFile !== current.railwayConfigFile) {
+    settings.railwayConfigFile = desired.railwayConfigFile ?? null;
+  }
 
   if (Object.keys(settings).length > 0) {
     changes.push({
@@ -274,32 +363,51 @@ function diffDomains(
   serviceName: string,
   desired: ServiceState,
   current: ServiceState,
-  currentDomains: Array<{ id: string; domain: string }>,
+  currentDomains: Array<{ id: string; domain: string; targetPort?: number }>,
   changes: Change[],
 ): void {
-  const desiredSet = new Set(desired.domains);
-  const currentSet = new Set(currentDomains.map((d) => d.domain));
+  // Build lookup maps
+  const desiredByName = new Map(desired.domains.map((d) => [d.domain, d]));
+  const currentByName = new Map(currentDomains.map((d) => [d.domain, d]));
 
   // Create domains that are desired but don't exist
-  for (const domain of desiredSet) {
-    if (!currentSet.has(domain)) {
+  for (const [domainName, desiredDomain] of desiredByName) {
+    const existing = currentByName.get(domainName);
+    if (!existing) {
       changes.push({
         type: "create-domain",
         serviceName,
         serviceId: current.id,
-        domain,
+        domain: domainName,
+        ...(desiredDomain.targetPort !== undefined ? { targetPort: desiredDomain.targetPort } : {}),
+      });
+    } else if (desiredDomain.targetPort !== existing.targetPort) {
+      // targetPort changed — Railway doesn't support in-place update, so delete + create
+      changes.push({
+        type: "delete-domain",
+        serviceName,
+        serviceId: current.id,
+        domain: domainName,
+        domainId: existing.id,
+      });
+      changes.push({
+        type: "create-domain",
+        serviceName,
+        serviceId: current.id,
+        domain: domainName,
+        ...(desiredDomain.targetPort !== undefined ? { targetPort: desiredDomain.targetPort } : {}),
       });
     }
   }
 
   // Delete domains that exist but aren't desired
-  for (const d of currentDomains) {
-    if (!desiredSet.has(d.domain)) {
+  for (const [domainName, d] of currentByName) {
+    if (!desiredByName.has(domainName)) {
       changes.push({
         type: "delete-domain",
         serviceName,
         serviceId: current.id,
-        domain: d.domain,
+        domain: domainName,
         domainId: d.id,
       });
     }
@@ -376,4 +484,136 @@ function diffBuckets(desired: State, current: State, changes: Change[]): void {
 
   // Note: Railway API doesn't support bucket deletion. We could warn here
   // but for now we just skip deletion — buckets must be deleted manually.
+}
+
+function diffServiceDomain(
+  serviceName: string,
+  desired: ServiceState,
+  current: ServiceState,
+  currentServiceDomain: { id: string; domain: string } | undefined,
+  changes: Change[],
+): void {
+  if (desired.railwayDomain && !currentServiceDomain) {
+    // Desired has railway domain but none exists → create
+    changes.push({
+      type: "create-service-domain",
+      serviceName,
+      serviceId: current.id,
+      targetPort: desired.railwayDomain.targetPort,
+    });
+  } else if (!desired.railwayDomain && currentServiceDomain) {
+    // No desired railway domain but one exists → delete
+    changes.push({
+      type: "delete-service-domain",
+      serviceName,
+      serviceId: current.id,
+      domainId: currentServiceDomain.id,
+    });
+  } else if (desired.railwayDomain && currentServiceDomain) {
+    // Both exist — check if targetPort changed (requires delete + create)
+    const currentTargetPort = current.railwayDomain?.targetPort;
+    if (desired.railwayDomain.targetPort !== currentTargetPort) {
+      changes.push({
+        type: "delete-service-domain",
+        serviceName,
+        serviceId: current.id,
+        domainId: currentServiceDomain.id,
+      });
+      changes.push({
+        type: "create-service-domain",
+        serviceName,
+        serviceId: current.id,
+        targetPort: desired.railwayDomain.targetPort,
+      });
+    }
+  }
+}
+
+function diffTcpProxies(
+  serviceName: string,
+  desired: ServiceState,
+  current: ServiceState,
+  currentProxies: Array<{ id: string; applicationPort: number }>,
+  changes: Change[],
+): void {
+  const desiredPorts = new Set(desired.tcpProxies || []);
+  const currentPortMap = new Map(currentProxies.map((p) => [p.applicationPort, p]));
+
+  // Create missing proxies
+  for (const port of desiredPorts) {
+    if (!currentPortMap.has(port)) {
+      changes.push({
+        type: "create-tcp-proxy",
+        serviceName,
+        serviceId: current.id,
+        applicationPort: port,
+      });
+    }
+  }
+
+  // Delete extra proxies
+  for (const [port, proxy] of currentPortMap) {
+    if (!desiredPorts.has(port)) {
+      changes.push({
+        type: "delete-tcp-proxy",
+        serviceName,
+        serviceId: current.id,
+        proxyId: proxy.id,
+      });
+    }
+  }
+}
+
+function diffServiceLimits(
+  serviceName: string,
+  desired: ServiceState,
+  current: ServiceState,
+  changes: Change[],
+): void {
+  if (!current.id) return;
+
+  if (!deepEqual(desired.limits, current.limits)) {
+    // Compute the limits to send: desired fields, or null to clear
+    const limits: { memoryGB?: number | null; vCPUs?: number | null } = {};
+    if (desired.limits) {
+      limits.memoryGB = desired.limits.memoryGB ?? null;
+      limits.vCPUs = desired.limits.vCPUs ?? null;
+    } else if (current.limits) {
+      // Desired has no limits but current does — clear them
+      limits.memoryGB = null;
+      limits.vCPUs = null;
+    } else {
+      return; // Both undefined — no change
+    }
+
+    changes.push({
+      type: "update-service-limits",
+      serviceName,
+      serviceId: current.id,
+      limits,
+    });
+  }
+}
+
+function diffStaticOutboundIps(
+  serviceName: string,
+  desired: ServiceState,
+  current: ServiceState,
+  changes: Change[],
+): void {
+  if (!current.id) return;
+
+  if (desired.staticOutboundIps && !current.staticOutboundIps) {
+    changes.push({
+      type: "enable-static-ips",
+      serviceName,
+      serviceId: current.id,
+    });
+  } else if (!desired.staticOutboundIps && current.staticOutboundIps) {
+    changes.push({
+      type: "disable-static-ips",
+      serviceName,
+      serviceId: current.id,
+    });
+  }
 }

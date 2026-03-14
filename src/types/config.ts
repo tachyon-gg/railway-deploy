@@ -35,15 +35,24 @@ export interface BucketConfig {
   name: string;
 }
 
+/** Domain entry — supports both simple string and object with target_port */
+export type DomainEntry = string | { domain: string; target_port?: number };
+
+/** Limits configuration */
+export interface LimitsConfig {
+  memory_gb?: number;
+  vcpus?: number;
+}
+
 /** Service template YAML structure (services/*.yaml) */
 export interface ServiceTemplate {
   params?: Record<string, ParamDef>;
   source?: SourceConfig;
   variables?: Record<string, string | null>;
   /** Singular domain (convenience — normalized to domains[]) */
-  domain?: string;
+  domain?: DomainEntry;
   /** Multiple domains */
-  domains?: string[];
+  domains?: DomainEntry[];
   region?: RegionConfig;
   restart_policy?: string;
   healthcheck?: HealthcheckConfig;
@@ -56,6 +65,26 @@ export interface ServiceTemplate {
   pre_deploy_command?: string | string[];
   restart_policy_max_retries?: number;
   sleep_application?: boolean;
+  builder?: string;
+  watch_patterns?: string[];
+  draining_seconds?: number;
+  overlap_seconds?: number;
+  ipv6_egress?: boolean;
+  branch?: string;
+  check_suites?: boolean;
+  registry_credentials?: { username: string; password: string };
+  /** Railway-provided domain */
+  railway_domain?: boolean | { target_port: number };
+  /** TCP proxy (single port) */
+  tcp_proxy?: number;
+  /** TCP proxies (multiple ports) */
+  tcp_proxies?: number[];
+  /** Resource limits */
+  limits?: LimitsConfig;
+  /** Railway config file path */
+  railway_config_file?: string;
+  /** Enable static outbound IPs */
+  static_outbound_ips?: boolean;
 }
 
 /** Service entry in an environment file */
@@ -69,9 +98,9 @@ export interface ServiceEntry {
   /** Inline source (when no template) */
   source?: SourceConfig;
   /** Singular domain (convenience — normalized to domains[]) */
-  domain?: string;
+  domain?: DomainEntry;
   /** Multiple domains */
-  domains?: string[];
+  domains?: DomainEntry[];
   /** Inline volume (when no template) */
   volume?: VolumeConfig;
   /** Inline region */
@@ -96,6 +125,34 @@ export interface ServiceEntry {
   restart_policy_max_retries?: number;
   /** Inline sleep application */
   sleep_application?: boolean;
+  /** Builder to use */
+  builder?: string;
+  /** Watch patterns for triggering deploys */
+  watch_patterns?: string[];
+  /** Draining seconds for zero-downtime deploys */
+  draining_seconds?: number;
+  /** Overlap seconds for zero-downtime deploys */
+  overlap_seconds?: number;
+  /** Enable IPv6 egress */
+  ipv6_egress?: boolean;
+  /** Branch to deploy from */
+  branch?: string;
+  /** Wait for CI check suites before deploying */
+  check_suites?: boolean;
+  /** Registry credentials for private images */
+  registry_credentials?: { username: string; password: string };
+  /** Railway-provided domain */
+  railway_domain?: boolean | { target_port: number };
+  /** TCP proxy (single port) */
+  tcp_proxy?: number;
+  /** TCP proxies (multiple ports) */
+  tcp_proxies?: number[];
+  /** Resource limits */
+  limits?: LimitsConfig;
+  /** Railway config file path */
+  railway_config_file?: string;
+  /** Enable static outbound IPs */
+  static_outbound_ips?: boolean;
 }
 
 /** Top-level environment file YAML structure (environments/*.yaml) */

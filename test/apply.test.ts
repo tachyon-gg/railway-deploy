@@ -637,6 +637,219 @@ describe("applyChangeset", () => {
     expect(input.numReplicas).toBeNull();
   });
 
+  test("create-service with branch passes branch to mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "create-service",
+      name: "web",
+      source: { repo: "github.com/org/app" },
+      branch: "develop",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].variables?.input.branch).toBe("develop");
+  });
+
+  test("create-service with registryCredentials passes credentials", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "create-service",
+      name: "web",
+      source: { image: "registry.example.com/app:latest" },
+      registryCredentials: { username: "user", password: "pass" },
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    const input = inputOf(calls[0]);
+    expect(input.registryCredentials).toEqual({ username: "user", password: "pass" });
+  });
+
+  test("update-deployment-trigger calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-deployment-trigger",
+      serviceName: "web",
+      serviceId: "svc-1",
+      triggerId: "trigger-1",
+      branch: "main",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("create-service-domain calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "create-service-domain",
+      serviceName: "web",
+      serviceId: "svc-1",
+      targetPort: 3000,
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("delete-service-domain calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "delete-service-domain",
+      serviceName: "web",
+      serviceId: "svc-1",
+      domainId: "svcdom-123",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("create-tcp-proxy calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "create-tcp-proxy",
+      serviceName: "db",
+      serviceId: "svc-db",
+      applicationPort: 5432,
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("delete-tcp-proxy calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "delete-tcp-proxy",
+      serviceName: "db",
+      serviceId: "svc-db",
+      proxyId: "proxy-123",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("update-service-limits calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-service-limits",
+      serviceName: "web",
+      serviceId: "svc-1",
+      limits: { memoryGB: 8, vCPUs: 4 },
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    const input = inputOf(calls[0]);
+    expect(input.memoryGB).toBe(8);
+    expect(input.vCPUs).toBe(4);
+  });
+
+  test("update-service-settings with new Group 1 fields", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-service-settings",
+      serviceName: "web",
+      serviceId: "svc-1",
+      settings: {
+        builder: "NIXPACKS",
+        watchPatterns: ["src/**", "package.json"],
+        drainingSeconds: 30,
+        overlapSeconds: 10,
+        ipv6EgressEnabled: true,
+      },
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+
+    const input = inputOf(calls[0]);
+    expect(input.builder).toBe("NIXPACKS");
+    expect(input.watchPatterns).toEqual(["src/**", "package.json"]);
+    expect(input.drainingSeconds).toBe(30);
+    expect(input.overlapSeconds).toBe(10);
+    expect(input.ipv6EgressEnabled).toBe(true);
+  });
+
+  test("update-service-settings clears builder when null", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-service-settings",
+      serviceName: "web",
+      serviceId: "svc-1",
+      settings: { builder: null },
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    const input = inputOf(calls[0]);
+    expect(input.builder).toBeNull();
+  });
+
+  test("update-service-settings with registryCredentials", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-service-settings",
+      serviceName: "web",
+      serviceId: "svc-1",
+      settings: {
+        registryCredentials: { username: "deploy-user", password: "deploy-pass" },
+      },
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    const input = inputOf(calls[0]);
+    expect(input.registryCredentials).toEqual({ username: "deploy-user", password: "deploy-pass" });
+  });
+
   test("create-volume without serviceId throws", async () => {
     const { client } = mockClient();
     const change: Change = {
