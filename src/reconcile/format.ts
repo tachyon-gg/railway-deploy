@@ -182,7 +182,10 @@ export function printChangeset(
     console.log(`  ${yellow("~", noColor)} DEPLOYMENT TRIGGERS:`);
     for (const c of triggerChanges) {
       if (c.type === "update-deployment-trigger") {
-        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: branch → ${c.branch}`);
+        const parts: string[] = [];
+        if (c.branch) parts.push(`branch → ${c.branch}`);
+        if (c.checkSuites !== undefined) parts.push(`checkSuites → ${c.checkSuites}`);
+        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${parts.join(", ")}`);
       }
     }
     console.log();

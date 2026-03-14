@@ -328,13 +328,23 @@ async function applyChange(
       break;
     }
 
-    case "enable-static-ips":
-      await createEgressGateway(client, change.serviceId, environmentId);
+    case "enable-static-ips": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await createEgressGateway(client, serviceId, environmentId);
       break;
+    }
 
-    case "disable-static-ips":
-      await clearEgressGateways(client, change.serviceId, environmentId);
+    case "disable-static-ips": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await clearEgressGateways(client, serviceId, environmentId);
       break;
+    }
 
     case "delete-bucket":
       // Railway API doesn't support bucket deletion

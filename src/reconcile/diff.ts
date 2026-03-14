@@ -128,10 +128,29 @@ export function computeChangeset(
         newSvcSettings.overlapSeconds = desiredSvc.overlapSeconds;
       if (desiredSvc.ipv6EgressEnabled !== undefined)
         newSvcSettings.ipv6EgressEnabled = desiredSvc.ipv6EgressEnabled;
-      if (desiredSvc.registryCredentials)
-        newSvcSettings.registryCredentials = desiredSvc.registryCredentials;
+      // registryCredentials already passed in create-service — skip here for new services
       if (desiredSvc.railwayConfigFile !== undefined)
         newSvcSettings.railwayConfigFile = desiredSvc.railwayConfigFile;
+
+      // Resource limits for new service (separate mutation)
+      if (desiredSvc.limits) {
+        changes.push({
+          type: "update-service-limits",
+          serviceName: name,
+          serviceId: "", // Resolved at apply time
+          limits: desiredSvc.limits,
+        });
+      }
+
+      // Static outbound IPs for new service
+      if (desiredSvc.staticOutboundIps) {
+        changes.push({
+          type: "enable-static-ips",
+          serviceName: name,
+          serviceId: "", // Resolved at apply time
+        });
+      }
+
       if (Object.keys(newSvcSettings).length > 0) {
         changes.push({
           type: "update-service-settings",

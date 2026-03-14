@@ -381,8 +381,12 @@ function buildServiceState(
     state.sleepApplication = instance.sleepApplication;
   }
   // Group 1 fields
-  state.builder = instance.builder;
-  state.watchPatterns = instance.watchPatterns;
+  if (instance.builder) {
+    state.builder = instance.builder;
+  }
+  if (instance.watchPatterns?.length) {
+    state.watchPatterns = instance.watchPatterns;
+  }
   if (instance.drainingSeconds !== undefined && instance.drainingSeconds !== null) {
     state.drainingSeconds = instance.drainingSeconds;
   }

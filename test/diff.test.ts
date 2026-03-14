@@ -1352,12 +1352,11 @@ describe("computeChangeset", () => {
     if (create?.type === "create-service") {
       expect(create.registryCredentials).toEqual({ username: "user", password: "pass" });
     }
-    // Also generates update-service-settings with registryCredentials
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.registryCredentials).toEqual({ username: "user", password: "pass" });
-    }
+    // registryCredentials should NOT be duplicated in update-service-settings for new services
+    const settingsWithCreds = changeset.changes.filter(
+      (c) => c.type === "update-service-settings" && c.settings.registryCredentials !== undefined,
+    );
+    expect(settingsWithCreds).toHaveLength(0);
   });
 
   test("existing service with registryCredentials always generates settings update", () => {
@@ -1842,6 +1841,7 @@ describe("computeChangeset", () => {
           railwayDomain: { targetPort: 3000 },
           tcpProxies: [5432, 6379],
           limits: { memoryGB: 4, vCPUs: 2 },
+          staticOutboundIps: true,
           builder: "NIXPACKS",
           watchPatterns: ["src/**"],
           drainingSeconds: 30,
@@ -1898,10 +1898,16 @@ describe("computeChangeset", () => {
       expect(update.settings.drainingSeconds).toBe(30);
       expect(update.settings.overlapSeconds).toBe(5);
       expect(update.settings.ipv6EgressEnabled).toBe(true);
-      expect(update.settings.registryCredentials).toEqual({ username: "user", password: "pass" });
+      // registryCredentials already in create-service, not duplicated here
+      expect(update.settings.registryCredentials).toBeUndefined();
     }
 
-    // Note: limits for new services are handled via update-service-settings or a separate mechanism;
-    // the diff doesn't produce update-service-limits for new services since they have no current.id
+    // limits for new services
+    const limitsChange = changeset.changes.find((c) => c.type === "update-service-limits");
+    expect(limitsChange).toBeDefined();
+
+    // static outbound IPs for new services
+    const staticIps = changeset.changes.find((c) => c.type === "enable-static-ips");
+    expect(staticIps).toBeDefined();
   });
 });
