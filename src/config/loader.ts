@@ -161,9 +161,15 @@ function resolveService(
   }
 
   // Resolve params if template has param defs
-  let params: Record<string, string> = {};
+  // service_name is a built-in param — always set to the service's config key
+  if (entry.params?.service_name || template?.params?.service_name) {
+    throw new Error(
+      `"service_name" is a built-in parameter and cannot be overridden (service "${name}")`,
+    );
+  }
+  let params: Record<string, string> = { service_name: name };
   if (template?.params) {
-    params = resolveParams(template.params, entry.params || {});
+    params = { ...resolveParams(template.params, entry.params || {}), service_name: name };
   }
 
   // Start with template values, expand params

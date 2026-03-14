@@ -209,11 +209,26 @@ variables:
 | `${ENV_VAR}` | At config load time | Reads from local environment (or `--env-file`) |
 | `${{service.VAR}}` | At Railway runtime | Railway reference variable (cross-service) |
 | `%{param}` | At config load time | Template parameter substitution |
+| `%{service_name}` | At config load time | Built-in: the service's config key |
 | `null` | N/A | Marks a variable for deletion |
+
+`%{param}` is expanded first, so it can be used inside `${{}}` Railway references. This is useful for templates that need to reference their own or other services' variables:
+
+```yaml
+variables:
+  # Reference own service's variable (resolves %{service_name} at config time,
+  # Railway resolves the ${{}} reference at runtime)
+  DATABASE_URL: ${{%{service_name}.DATABASE_URL}}
+
+  # Reference another service by param
+  REDIS_URL: ${{%{cache_service}.REDIS_URL}}
+```
 
 ### Service templates
 
-Templates extract reusable service definitions with parameterized values:
+Templates extract reusable service definitions with parameterized values.
+
+The built-in `%{service_name}` param is always available and resolves to the service's key in the config (e.g., `web`, `api`). It cannot be overridden.
 
 ```yaml
 # services/web.yaml
@@ -228,10 +243,11 @@ source:
 
 variables:
   APP_VERSION: "%{tag}"
+  SERVICE_NAME: "%{service_name}"
   DATABASE_URL: ${{Postgres.DATABASE_URL}}
 
 domains:
-  - "%{tag}.example.com"
+  - "%{service_name}.example.com"
 
 healthcheck:
   path: /health
