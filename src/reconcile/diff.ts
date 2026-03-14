@@ -61,6 +61,34 @@ export function computeChangeset(
           domain,
         });
       }
+
+      // Apply service settings that aren't part of create-service
+      const newSvcSettings: UpdateServiceSettings["settings"] = {};
+      if (desiredSvc.restartPolicy) newSvcSettings.restartPolicy = desiredSvc.restartPolicy;
+      if (desiredSvc.healthcheck) newSvcSettings.healthcheck = desiredSvc.healthcheck;
+      if (desiredSvc.regions) newSvcSettings.regions = desiredSvc.regions;
+      if (desiredSvc.startCommand !== undefined)
+        newSvcSettings.startCommand = desiredSvc.startCommand;
+      if (desiredSvc.buildCommand !== undefined)
+        newSvcSettings.buildCommand = desiredSvc.buildCommand;
+      if (desiredSvc.rootDirectory !== undefined)
+        newSvcSettings.rootDirectory = desiredSvc.rootDirectory;
+      if (desiredSvc.dockerfilePath !== undefined)
+        newSvcSettings.dockerfilePath = desiredSvc.dockerfilePath;
+      if (desiredSvc.preDeployCommand !== undefined)
+        newSvcSettings.preDeployCommand = desiredSvc.preDeployCommand;
+      if (desiredSvc.restartPolicyMaxRetries !== undefined)
+        newSvcSettings.restartPolicyMaxRetries = desiredSvc.restartPolicyMaxRetries;
+      if (desiredSvc.sleepApplication !== undefined)
+        newSvcSettings.sleepApplication = desiredSvc.sleepApplication;
+      if (Object.keys(newSvcSettings).length > 0) {
+        changes.push({
+          type: "update-service-settings",
+          serviceName: name,
+          serviceId: "", // Resolved at apply time via createdServiceIds
+          settings: newSvcSettings,
+        });
+      }
     } else {
       // Service exists — check for updates
       diffServiceSettings(desiredSvc, currentSvc, changes);

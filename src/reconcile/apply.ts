@@ -172,6 +172,10 @@ async function applyChange(
       break;
 
     case "update-service-settings": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
       const input: ServiceInstanceUpdateInput = {};
       if (change.settings.source) input.source = change.settings.source;
       if (change.settings.restartPolicy)
@@ -201,7 +205,7 @@ async function applyChange(
       if (change.settings.sleepApplication !== undefined)
         input.sleepApplication = change.settings.sleepApplication;
 
-      await updateServiceInstance(client, change.serviceId, environmentId, input);
+      await updateServiceInstance(client, serviceId, environmentId, input);
       break;
     }
 

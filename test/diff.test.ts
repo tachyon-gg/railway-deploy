@@ -508,6 +508,36 @@ describe("computeChangeset", () => {
     expect(bucketChanges).toEqual([]);
   });
 
+  test("new service includes settings in update-service-settings change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          variables: {},
+          domains: [],
+          source: { image: "nginx:latest" },
+          startCommand: "npm start",
+          buildCommand: "npm run build",
+          restartPolicy: "ON_FAILURE",
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const create = changeset.changes.find((c) => c.type === "create-service");
+    expect(create).toBeDefined();
+
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update!.type === "update-service-settings") {
+      expect(update!.settings.startCommand).toBe("npm start");
+      expect(update!.settings.buildCommand).toBe("npm run build");
+      expect(update!.settings.restartPolicy).toBe("ON_FAILURE");
+      expect(update!.serviceId).toBe(""); // Resolved at apply time
+    }
+  });
+
   test("detects new service settings changes (startCommand, buildCommand, etc.)", () => {
     const desired = makeState({
       services: {
