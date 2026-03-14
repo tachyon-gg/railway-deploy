@@ -99,7 +99,9 @@ describe("CLI", () => {
   });
 
   test("nonexistent config file exits 1", async () => {
-    const { stderr, exitCode } = await run([join(FIXTURE_DIR, "does-not-exist.yaml")]);
+    const { stderr, exitCode } = await run([join(FIXTURE_DIR, "does-not-exist.yaml")], {
+      RAILWAY_TOKEN: "dummy",
+    });
     expect(exitCode).toBe(1);
     expect(stderr).toContain("not found");
   });
