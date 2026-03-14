@@ -404,7 +404,10 @@ function diffDomains(
         domain: domainName,
         ...(desiredDomain.targetPort !== undefined ? { targetPort: desiredDomain.targetPort } : {}),
       });
-    } else if (desiredDomain.targetPort !== existing.targetPort) {
+    } else if (
+      desiredDomain.targetPort !== undefined &&
+      desiredDomain.targetPort !== existing.targetPort
+    ) {
       // targetPort changed — Railway doesn't support in-place update, so delete + create
       changes.push({
         type: "delete-domain",
