@@ -26,64 +26,196 @@ function maskValue(key: string, value: string): string {
   return isSensitive(key) ? "***" : value;
 }
 
-export function changeLabel(change: Change): string {
+type Action = "create" | "update" | "delete";
+
+interface ChangeDescription {
+  /** Display category for grouping */
+  category: string;
+  /** Create, update, or delete */
+  action: Action;
+  /** Human-readable summary line */
+  summary: string;
+}
+
+/**
+ * Single source of truth for how a change is displayed.
+ * Every change type maps to a category, action, and summary.
+ */
+function describeChange(change: Change): ChangeDescription {
   switch (change.type) {
-    case "create-service":
-      return `create-service: ${change.name}`;
+    case "create-service": {
+      const src = change.source?.image || change.source?.repo || "empty";
+      const details: string[] = [src];
+      if (change.branch) details.push(`branch: ${change.branch}`);
+      if (change.volume) details.push(`volume: ${change.volume.mount}`);
+      if (change.cronSchedule) details.push(`cron: ${change.cronSchedule}`);
+      return {
+        category: "Services",
+        action: "create",
+        summary: `${change.name} (${details.join(", ")})`,
+      };
+    }
     case "delete-service":
-      return `delete-service: ${change.name}`;
-    case "upsert-variables":
-      return `upsert-variables: ${change.serviceName} (${Object.keys(change.variables).length} vars)`;
-    case "delete-variables":
-      return `delete-variables: ${change.serviceName} (${change.variableNames.length} vars)`;
-    case "upsert-shared-variables":
-      return `upsert-shared-variables (${Object.keys(change.variables).length} vars)`;
-    case "delete-shared-variables":
-      return `delete-shared-variables (${change.variableNames.length} vars)`;
-    case "create-domain":
-      return `create-domain: ${change.serviceName} → ${change.domain}`;
-    case "delete-domain":
-      return `delete-domain: ${change.serviceName} → ${change.domain}`;
+      return {
+        category: "Services",
+        action: "delete",
+        summary: `${change.name} (${change.serviceId})`,
+      };
+
     case "update-service-settings":
-      return `update-settings: ${change.serviceName} (${Object.keys(change.settings).join(", ")})`;
-    case "create-volume":
-      return `create-volume: ${change.serviceName} (${change.mount})`;
-    case "delete-volume":
-      return `delete-volume: ${change.serviceName}`;
+      return {
+        category: "Service settings",
+        action: "update",
+        summary: `${change.serviceName}: ${Object.keys(change.settings).join(", ")}`,
+      };
+
     case "update-deployment-trigger": {
       const parts: string[] = [];
-      if (change.branch) parts.push(`branch: ${change.branch}`);
-      if (change.checkSuites !== undefined) parts.push(`checkSuites: ${change.checkSuites}`);
-      return `update-deployment-trigger: ${change.serviceName} → ${parts.join(", ")}`;
+      if (change.branch) parts.push(`branch → ${change.branch}`);
+      if (change.checkSuites !== undefined) parts.push(`checkSuites → ${change.checkSuites}`);
+      return {
+        category: "Deployment triggers",
+        action: "update",
+        summary: `${change.serviceName}: ${parts.join(", ")}`,
+      };
     }
-    case "create-service-domain":
-      return `create-service-domain: ${change.serviceName}`;
+
+    case "upsert-variables":
+      return {
+        category: "Service variables",
+        action: "update",
+        summary: `${change.serviceName}: set ${Object.keys(change.variables).length} var(s) — ${Object.keys(change.variables).join(", ")}`,
+      };
+    case "delete-variables":
+      return {
+        category: "Service variables",
+        action: "delete",
+        summary: `${change.serviceName}: delete ${change.variableNames.length} var(s) — ${change.variableNames.join(", ")}`,
+      };
+    case "upsert-shared-variables":
+      return {
+        category: "Shared variables",
+        action: "update",
+        summary: `set ${Object.keys(change.variables).length} var(s) — ${Object.keys(change.variables).join(", ")}`,
+      };
+    case "delete-shared-variables":
+      return {
+        category: "Shared variables",
+        action: "delete",
+        summary: `delete ${change.variableNames.length} var(s) — ${change.variableNames.join(", ")}`,
+      };
+
+    case "create-domain": {
+      const port = change.targetPort ? ` (port ${change.targetPort})` : "";
+      return {
+        category: "Domains",
+        action: "create",
+        summary: `${change.serviceName}: ${change.domain}${port}`,
+      };
+    }
+    case "delete-domain":
+      return {
+        category: "Domains",
+        action: "delete",
+        summary: `${change.serviceName}: ${change.domain}`,
+      };
+
+    case "create-service-domain": {
+      const port = change.targetPort ? ` (port ${change.targetPort})` : "";
+      return {
+        category: "Railway domains",
+        action: "create",
+        summary: `${change.serviceName}${port}`,
+      };
+    }
     case "delete-service-domain":
-      return `delete-service-domain: ${change.serviceName}`;
+      return { category: "Railway domains", action: "delete", summary: change.serviceName };
+
+    case "create-volume":
+      return {
+        category: "Volumes",
+        action: "create",
+        summary: `${change.serviceName}: ${change.mount}`,
+      };
+    case "delete-volume":
+      return {
+        category: "Volumes",
+        action: "delete",
+        summary: `${change.serviceName} (${change.volumeId})`,
+      };
+
     case "create-tcp-proxy":
-      return `create-tcp-proxy: ${change.serviceName} (port ${change.applicationPort})`;
+      return {
+        category: "TCP proxies",
+        action: "create",
+        summary: `${change.serviceName}: port ${change.applicationPort}`,
+      };
     case "delete-tcp-proxy":
-      return `delete-tcp-proxy: ${change.serviceName}`;
-    case "update-service-limits":
-      return `update-service-limits: ${change.serviceName}`;
+      return {
+        category: "TCP proxies",
+        action: "delete",
+        summary: `${change.serviceName}: proxy ${change.proxyId}`,
+      };
+
+    case "update-service-limits": {
+      const parts: string[] = [];
+      if (change.limits.memoryGB !== undefined)
+        parts.push(`memory: ${change.limits.memoryGB ?? "unset"}GB`);
+      if (change.limits.vCPUs !== undefined) parts.push(`vCPUs: ${change.limits.vCPUs ?? "unset"}`);
+      return {
+        category: "Resource limits",
+        action: "update",
+        summary: `${change.serviceName}: ${parts.join(", ")}`,
+      };
+    }
+
     case "enable-static-ips":
-      return `enable-static-ips: ${change.serviceName}`;
+      return {
+        category: "Static outbound IPs",
+        action: "create",
+        summary: `${change.serviceName}: enable`,
+      };
     case "disable-static-ips":
-      return `disable-static-ips: ${change.serviceName}`;
+      return {
+        category: "Static outbound IPs",
+        action: "delete",
+        summary: `${change.serviceName}: disable`,
+      };
+
     case "create-bucket":
-      return `create-bucket: ${change.bucketName}`;
+      return { category: "Buckets", action: "create", summary: change.bucketName };
     case "delete-bucket":
-      return `delete-bucket: ${change.name}`;
+      return { category: "Buckets", action: "delete", summary: change.name };
+
     default: {
       const _exhaustive: never = change;
-      return `unknown: ${(_exhaustive as Change).type}`;
+      return { category: "Unknown", action: "update", summary: (_exhaustive as Change).type };
     }
   }
 }
 
 /**
- * Print a human-readable summary of the changeset to stdout, grouped by
- * change category (services, settings, variables, domains, volumes, buckets).
+ * Human-readable one-line label for a change (used in apply output).
+ */
+export function changeLabel(change: Change): string {
+  const desc = describeChange(change);
+  return `${change.type}: ${desc.summary}`;
+}
+
+const ACTION_ICON: Record<Action, (noColor: boolean) => string> = {
+  create: (nc) => green("+", nc),
+  update: (nc) => yellow("~", nc),
+  delete: (nc) => red("-", nc),
+};
+
+const CATEGORY_HEADER_ICON: Record<Action, (noColor: boolean) => string> = {
+  create: (nc) => green("+", nc),
+  update: (nc) => yellow("~", nc),
+  delete: (nc) => red("-", nc),
+};
+
+/**
+ * Print a human-readable summary of the changeset to stdout.
  *
  * Sensitive variable values (matching PASSWORD, SECRET, TOKEN, etc.) are
  * automatically masked. In verbose mode, old and new values are shown
@@ -110,262 +242,72 @@ export function printChangeset(
 
   console.log(`\nChangeset (${changeset.changes.length} changes):\n`);
 
-  // Group by type for readability
-  const creates = changeset.changes.filter((c) => c.type === "create-service");
-  const deletes = changeset.changes.filter((c) => c.type === "delete-service");
-  const upsertVars = changeset.changes.filter((c) => c.type === "upsert-variables");
-  const deleteVars = changeset.changes.filter((c) => c.type === "delete-variables");
-  const sharedUpsert = changeset.changes.filter((c) => c.type === "upsert-shared-variables");
-  const sharedDelete = changeset.changes.filter((c) => c.type === "delete-shared-variables");
-  const domainChanges = changeset.changes.filter(
-    (c) => c.type === "create-domain" || c.type === "delete-domain",
-  );
-  const settingsChanges = changeset.changes.filter((c) => c.type === "update-service-settings");
-  const triggerChanges = changeset.changes.filter((c) => c.type === "update-deployment-trigger");
-  const volumeCreates = changeset.changes.filter((c) => c.type === "create-volume");
-  const volumeDeletes = changeset.changes.filter((c) => c.type === "delete-volume");
-  const serviceDomainChanges = changeset.changes.filter(
-    (c) => c.type === "create-service-domain" || c.type === "delete-service-domain",
-  );
-  const tcpProxyChanges = changeset.changes.filter(
-    (c) => c.type === "create-tcp-proxy" || c.type === "delete-tcp-proxy",
-  );
-  const limitsChanges = changeset.changes.filter((c) => c.type === "update-service-limits");
-  const staticIpChanges = changeset.changes.filter(
-    (c) => c.type === "enable-static-ips" || c.type === "disable-static-ips",
-  );
-  const bucketCreates = changeset.changes.filter((c) => c.type === "create-bucket");
-  const bucketDeletes = changeset.changes.filter((c) => c.type === "delete-bucket");
-
-  if (creates.length > 0) {
-    console.log(`  ${green("+", noColor)} CREATE services:`);
-    for (const c of creates) {
-      if (c.type === "create-service") {
-        const src = c.source?.image || c.source?.repo || "empty";
-        console.log(`    ${green("+", noColor)} ${c.name} (${src})`);
-      }
-    }
-    console.log();
+  // Group changes by category, preserving order of first appearance
+  const groups = new Map<string, Change[]>();
+  for (const change of changeset.changes) {
+    const { category } = describeChange(change);
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category)?.push(change);
   }
 
-  if (deletes.length > 0) {
-    console.log(`  ${red("-", noColor)} DELETE services:`);
-    for (const c of deletes) {
-      if (c.type === "delete-service") {
-        console.log(`    ${red("-", noColor)} ${c.name} ${dim(`(${c.serviceId})`, noColor)}`);
-      }
-    }
-    console.log();
-  }
+  // Print each group
+  for (const [category, changes] of groups) {
+    // Determine the dominant action for the category header
+    const actions = new Set(changes.map((c) => describeChange(c).action));
+    const headerAction: Action = actions.size === 1 ? [...actions][0] : "update";
+    const headerIcon = CATEGORY_HEADER_ICON[headerAction](noColor);
 
-  if (settingsChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} UPDATE service settings:`);
-    for (const c of settingsChanges) {
-      if (c.type === "update-service-settings") {
-        const keys = Object.keys(c.settings).join(", ");
-        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${keys}`);
-        if (verbose) {
-          for (const [key, value] of Object.entries(c.settings)) {
-            const currentSvc = options?.currentState?.services[c.serviceName];
-            const oldVal = currentSvc ? (currentSvc as Record<string, unknown>)[key] : undefined;
-            const oldStr = oldVal !== undefined ? JSON.stringify(oldVal) : "(unset)";
-            const newStr = value === null ? "(unset)" : JSON.stringify(value);
-            console.log(`      ${key}: ${oldStr} → ${newStr}`);
-          }
+    console.log(`  ${headerIcon} ${category.toUpperCase()}:`);
+
+    for (const change of changes) {
+      const desc = describeChange(change);
+      const icon = ACTION_ICON[desc.action](noColor);
+
+      // Verbose details for specific change types
+      if (verbose && change.type === "update-service-settings") {
+        console.log(`    ${icon} ${change.serviceName}:`);
+        for (const [key, value] of Object.entries(change.settings)) {
+          const currentSvc = options?.currentState?.services[change.serviceName];
+          const oldVal = currentSvc ? (currentSvc as Record<string, unknown>)[key] : undefined;
+          const oldStr = oldVal !== undefined ? JSON.stringify(oldVal) : "(unset)";
+          const newStr = value === null ? "(unset)" : JSON.stringify(value);
+          console.log(`      ${key}: ${oldStr} → ${newStr}`);
         }
-      }
-    }
-    console.log();
-  }
-
-  if (triggerChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} DEPLOYMENT TRIGGERS:`);
-    for (const c of triggerChanges) {
-      if (c.type === "update-deployment-trigger") {
-        const parts: string[] = [];
-        if (c.branch) parts.push(`branch → ${c.branch}`);
-        if (c.checkSuites !== undefined) parts.push(`checkSuites → ${c.checkSuites}`);
-        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${parts.join(", ")}`);
-      }
-    }
-    console.log();
-  }
-
-  if (sharedUpsert.length > 0 || sharedDelete.length > 0) {
-    console.log(`  ${yellow("~", noColor)} SHARED variables:`);
-    for (const c of sharedUpsert) {
-      if (c.type === "upsert-shared-variables") {
-        for (const [key, value] of Object.entries(c.variables)) {
-          if (verbose) {
-            const oldVal = options?.currentState?.sharedVariables[key];
-            const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
-            console.log(
-              `    ${green("+", noColor)} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
-            );
-          } else {
-            console.log(`    ${green("+", noColor)} ${key}`);
-          }
+      } else if (verbose && change.type === "upsert-variables") {
+        console.log(`    ${change.serviceName}:`);
+        for (const [key, value] of Object.entries(change.variables)) {
+          const currentSvc = options?.currentState?.services[change.serviceName];
+          const oldVal = currentSvc?.variables[key];
+          const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
+          console.log(
+            `      ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
+          );
         }
-      }
-    }
-    for (const c of sharedDelete) {
-      if (c.type === "delete-shared-variables") {
-        for (const name of c.variableNames) {
-          console.log(`    ${red("-", noColor)} ${name}`);
+      } else if (verbose && change.type === "upsert-shared-variables") {
+        for (const [key, value] of Object.entries(change.variables)) {
+          const oldVal = options?.currentState?.sharedVariables[key];
+          const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
+          console.log(
+            `    ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
+          );
         }
-      }
-    }
-    console.log();
-  }
-
-  if (upsertVars.length > 0 || deleteVars.length > 0) {
-    console.log(`  ${yellow("~", noColor)} SERVICE variables:`);
-    for (const c of upsertVars) {
-      if (c.type === "upsert-variables") {
-        const keys = Object.keys(c.variables);
-        if (verbose) {
-          console.log(`    ${c.serviceName}:`);
-          for (const [key, value] of Object.entries(c.variables)) {
-            const currentSvc = options?.currentState?.services[c.serviceName];
-            const oldVal = currentSvc?.variables[key];
-            const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
-            console.log(
-              `      ${green("+", noColor)} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
-            );
-          }
-        } else {
-          console.log(`    ${c.serviceName}: set ${keys.length} var(s) — ${keys.join(", ")}`);
-        }
-      }
-    }
-    for (const c of deleteVars) {
-      if (c.type === "delete-variables") {
-        console.log(
-          `    ${c.serviceName}: ${red("delete", noColor)} ${c.variableNames.length} var(s) — ${c.variableNames.join(", ")}`,
-        );
-      }
-    }
-    console.log();
-  }
-
-  if (domainChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} DOMAINS:`);
-    for (const c of domainChanges) {
-      if (c.type === "create-domain") {
-        console.log(`    ${green("+", noColor)} ${c.serviceName}: ${c.domain}`);
-      } else if (c.type === "delete-domain") {
-        console.log(`    ${red("-", noColor)} ${c.serviceName}: ${c.domain}`);
-      }
-    }
-    console.log();
-  }
-
-  if (volumeCreates.length > 0 || volumeDeletes.length > 0) {
-    console.log(`  ${yellow("~", noColor)} VOLUMES:`);
-    for (const c of volumeCreates) {
-      if (c.type === "create-volume") {
-        console.log(`    ${green("+", noColor)} ${c.serviceName}: ${c.mount}`);
-      }
-    }
-    for (const c of volumeDeletes) {
-      if (c.type === "delete-volume") {
-        console.log(`    ${red("-", noColor)} ${c.serviceName}`);
-      }
-    }
-    console.log();
-  }
-
-  if (serviceDomainChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} RAILWAY DOMAINS:`);
-    for (const c of serviceDomainChanges) {
-      if (c.type === "create-service-domain") {
-        const port = c.targetPort ? ` (port ${c.targetPort})` : "";
-        console.log(`    ${green("+", noColor)} ${c.serviceName}${port}`);
-      } else if (c.type === "delete-service-domain") {
-        console.log(`    ${red("-", noColor)} ${c.serviceName}`);
-      }
-    }
-    console.log();
-  }
-
-  if (tcpProxyChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} TCP PROXIES:`);
-    for (const c of tcpProxyChanges) {
-      if (c.type === "create-tcp-proxy") {
-        console.log(`    ${green("+", noColor)} ${c.serviceName}: port ${c.applicationPort}`);
-      } else if (c.type === "delete-tcp-proxy") {
-        console.log(`    ${red("-", noColor)} ${c.serviceName}`);
-      }
-    }
-    console.log();
-  }
-
-  if (limitsChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} RESOURCE LIMITS:`);
-    for (const c of limitsChanges) {
-      if (c.type === "update-service-limits") {
-        const parts: string[] = [];
-        if (c.limits.memoryGB !== undefined)
-          parts.push(`memory: ${c.limits.memoryGB ?? "unset"}GB`);
-        if (c.limits.vCPUs !== undefined) parts.push(`vCPUs: ${c.limits.vCPUs ?? "unset"}`);
-        console.log(`    ${yellow("~", noColor)} ${c.serviceName}: ${parts.join(", ")}`);
-      }
-    }
-    console.log();
-  }
-
-  if (staticIpChanges.length > 0) {
-    console.log(`  ${yellow("~", noColor)} STATIC OUTBOUND IPS:`);
-    for (const c of staticIpChanges) {
-      if (c.type === "enable-static-ips") {
-        console.log(`    ${green("+", noColor)} ${c.serviceName}: enable`);
-      } else if (c.type === "disable-static-ips") {
-        console.log(`    ${red("-", noColor)} ${c.serviceName}: disable`);
-      }
-    }
-    console.log();
-  }
-
-  if (bucketCreates.length > 0 || bucketDeletes.length > 0) {
-    console.log(`  ${yellow("~", noColor)} BUCKETS:`);
-    for (const c of bucketCreates) {
-      if (c.type === "create-bucket") {
-        console.log(`    ${green("+", noColor)} ${c.bucketName}`);
-      }
-    }
-    for (const c of bucketDeletes) {
-      if (c.type === "delete-bucket") {
-        console.log(`    ${red("-", noColor)} ${c.name}`);
+      } else {
+        console.log(`    ${icon} ${desc.summary}`);
       }
     }
     console.log();
   }
 
   // Summary line
-  const createCount =
-    creates.length +
-    volumeCreates.length +
-    bucketCreates.length +
-    serviceDomainChanges.filter((c) => c.type === "create-service-domain").length +
-    tcpProxyChanges.filter((c) => c.type === "create-tcp-proxy").length +
-    staticIpChanges.filter((c) => c.type === "enable-static-ips").length;
-  const updateCount =
-    settingsChanges.length +
-    triggerChanges.length +
-    limitsChanges.length +
-    upsertVars.length +
-    sharedUpsert.length +
-    domainChanges.filter((c) => c.type === "create-domain").length;
-  const deleteCount =
-    deletes.length +
-    deleteVars.length +
-    sharedDelete.length +
-    volumeDeletes.length +
-    bucketDeletes.length +
-    domainChanges.filter((c) => c.type === "delete-domain").length +
-    serviceDomainChanges.filter((c) => c.type === "delete-service-domain").length +
-    tcpProxyChanges.filter((c) => c.type === "delete-tcp-proxy").length +
-    staticIpChanges.filter((c) => c.type === "disable-static-ips").length;
+  let createCount = 0;
+  let updateCount = 0;
+  let deleteCount = 0;
+  for (const change of changeset.changes) {
+    const { action } = describeChange(change);
+    if (action === "create") createCount++;
+    else if (action === "update") updateCount++;
+    else deleteCount++;
+  }
 
   const parts: string[] = [];
   if (createCount > 0) parts.push(green(`${createCount} to create`, noColor));

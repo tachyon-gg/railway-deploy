@@ -26,176 +26,149 @@ function allOutput(): string {
 // changeLabel
 // ---------------------------------------------------------------------------
 describe("changeLabel", () => {
-  test("create-service", () => {
-    const change: Change = { type: "create-service", name: "web" };
-    expect(changeLabel(change)).toBe("create-service: web");
-  });
+  test("includes change type and summary for every change type", () => {
+    const changes: Array<{ change: Change; mustContain: string[] }> = [
+      {
+        change: { type: "create-service", name: "web" },
+        mustContain: ["create-service", "web", "empty"],
+      },
+      {
+        change: {
+          type: "create-service",
+          name: "api",
+          source: { image: "node:20" },
+          branch: "main",
+        },
+        mustContain: ["create-service", "node:20", "branch: main"],
+      },
+      {
+        change: { type: "delete-service", name: "old", serviceId: "svc-1" },
+        mustContain: ["delete-service", "old", "svc-1"],
+      },
+      {
+        change: { type: "upsert-variables", serviceName: "web", variables: { A: "1", B: "2" } },
+        mustContain: ["upsert-variables", "web", "2 var", "A", "B"],
+      },
+      {
+        change: { type: "delete-variables", serviceName: "web", variableNames: ["X"] },
+        mustContain: ["delete-variables", "web", "1 var", "X"],
+      },
+      {
+        change: { type: "upsert-shared-variables", variables: { S: "1" } },
+        mustContain: ["upsert-shared-variables", "1 var", "S"],
+      },
+      {
+        change: { type: "delete-shared-variables", variableNames: ["X", "Y"] },
+        mustContain: ["delete-shared-variables", "2 var", "X", "Y"],
+      },
+      {
+        change: { type: "create-domain", serviceName: "web", domain: "example.com" },
+        mustContain: ["create-domain", "web", "example.com"],
+      },
+      {
+        change: { type: "create-domain", serviceName: "web", domain: "api.com", targetPort: 8080 },
+        mustContain: ["create-domain", "api.com", "8080"],
+      },
+      {
+        change: { type: "delete-domain", serviceName: "web", domain: "old.com", domainId: "d1" },
+        mustContain: ["delete-domain", "old.com"],
+      },
+      {
+        change: {
+          type: "update-service-settings",
+          serviceName: "api",
+          serviceId: "s1",
+          settings: { startCommand: "npm start" },
+        },
+        mustContain: ["update-service-settings", "api", "startCommand"],
+      },
+      {
+        change: {
+          type: "create-volume",
+          serviceName: "db",
+          serviceId: "s1",
+          mount: "/data",
+          name: "vol",
+        },
+        mustContain: ["create-volume", "db", "/data"],
+      },
+      {
+        change: { type: "delete-volume", serviceName: "db", serviceId: "s1", volumeId: "v1" },
+        mustContain: ["delete-volume", "db", "v1"],
+      },
+      {
+        change: {
+          type: "update-deployment-trigger",
+          serviceName: "web",
+          serviceId: "s1",
+          triggerId: "t1",
+          branch: "develop",
+        },
+        mustContain: ["update-deployment-trigger", "web", "develop"],
+      },
+      {
+        change: {
+          type: "update-deployment-trigger",
+          serviceName: "web",
+          serviceId: "s1",
+          triggerId: "t1",
+          checkSuites: true,
+        },
+        mustContain: ["update-deployment-trigger", "checkSuites", "true"],
+      },
+      {
+        change: { type: "create-service-domain", serviceName: "web", targetPort: 3000 },
+        mustContain: ["create-service-domain", "web", "3000"],
+      },
+      {
+        change: { type: "create-service-domain", serviceName: "web" },
+        mustContain: ["create-service-domain", "web"],
+      },
+      {
+        change: { type: "delete-service-domain", serviceName: "web", domainId: "d1" },
+        mustContain: ["delete-service-domain", "web"],
+      },
+      {
+        change: { type: "create-tcp-proxy", serviceName: "db", applicationPort: 5432 },
+        mustContain: ["create-tcp-proxy", "db", "5432"],
+      },
+      {
+        change: { type: "delete-tcp-proxy", serviceName: "db", proxyId: "p1" },
+        mustContain: ["delete-tcp-proxy", "db", "p1"],
+      },
+      {
+        change: {
+          type: "update-service-limits",
+          serviceName: "web",
+          serviceId: "s1",
+          limits: { memoryGB: 8, vCPUs: 4 },
+        },
+        mustContain: ["update-service-limits", "web", "8GB", "vCPUs: 4"],
+      },
+      {
+        change: { type: "enable-static-ips", serviceName: "web", serviceId: "s1" },
+        mustContain: ["enable-static-ips", "web", "enable"],
+      },
+      {
+        change: { type: "disable-static-ips", serviceName: "web", serviceId: "s1" },
+        mustContain: ["disable-static-ips", "web", "disable"],
+      },
+      {
+        change: { type: "create-bucket", name: "k", bucketName: "my-bucket" },
+        mustContain: ["create-bucket", "my-bucket"],
+      },
+      {
+        change: { type: "delete-bucket", name: "old", bucketId: "b1" },
+        mustContain: ["delete-bucket", "old"],
+      },
+    ];
 
-  test("delete-service", () => {
-    const change: Change = { type: "delete-service", name: "api", serviceId: "svc-123" };
-    expect(changeLabel(change)).toBe("delete-service: api");
-  });
-
-  test("upsert-variables", () => {
-    const change: Change = {
-      type: "upsert-variables",
-      serviceName: "web",
-      variables: { FOO: "bar", BAZ: "qux" },
-    };
-    expect(changeLabel(change)).toBe("upsert-variables: web (2 vars)");
-  });
-
-  test("delete-variables", () => {
-    const change: Change = {
-      type: "delete-variables",
-      serviceName: "web",
-      variableNames: ["OLD_VAR"],
-    };
-    expect(changeLabel(change)).toBe("delete-variables: web (1 vars)");
-  });
-
-  test("upsert-shared-variables", () => {
-    const change: Change = {
-      type: "upsert-shared-variables",
-      variables: { SHARED_A: "1", SHARED_B: "2", SHARED_C: "3" },
-    };
-    expect(changeLabel(change)).toBe("upsert-shared-variables (3 vars)");
-  });
-
-  test("delete-shared-variables", () => {
-    const change: Change = {
-      type: "delete-shared-variables",
-      variableNames: ["X", "Y"],
-    };
-    expect(changeLabel(change)).toBe("delete-shared-variables (2 vars)");
-  });
-
-  test("create-domain", () => {
-    const change: Change = {
-      type: "create-domain",
-      serviceName: "web",
-      domain: "example.com",
-    };
-    expect(changeLabel(change)).toBe("create-domain: web → example.com");
-  });
-
-  test("delete-domain", () => {
-    const change: Change = {
-      type: "delete-domain",
-      serviceName: "web",
-      domain: "old.example.com",
-      domainId: "dom-1",
-    };
-    expect(changeLabel(change)).toBe("delete-domain: web → old.example.com");
-  });
-
-  test("update-service-settings", () => {
-    const change: Change = {
-      type: "update-service-settings",
-      serviceName: "api",
-      serviceId: "svc-1",
-      settings: { startCommand: "node index.js", buildCommand: "npm run build" },
-    };
-    expect(changeLabel(change)).toBe("update-settings: api (startCommand, buildCommand)");
-  });
-
-  test("create-volume", () => {
-    const change: Change = {
-      type: "create-volume",
-      serviceName: "db",
-      serviceId: "svc-2",
-      mount: "/data",
-      name: "pg-data",
-    };
-    expect(changeLabel(change)).toBe("create-volume: db (/data)");
-  });
-
-  test("delete-volume", () => {
-    const change: Change = {
-      type: "delete-volume",
-      serviceName: "db",
-      serviceId: "svc-2",
-      volumeId: "vol-1",
-    };
-    expect(changeLabel(change)).toBe("delete-volume: db");
-  });
-
-  test("create-bucket", () => {
-    const change: Change = {
-      type: "create-bucket",
-      name: "assets",
-      bucketName: "my-bucket",
-    };
-    expect(changeLabel(change)).toBe("create-bucket: my-bucket");
-  });
-
-  test("delete-bucket", () => {
-    const change: Change = {
-      type: "delete-bucket",
-      name: "old-bucket",
-      bucketId: "bkt-1",
-    };
-    expect(changeLabel(change)).toBe("delete-bucket: old-bucket");
-  });
-
-  test("update-deployment-trigger", () => {
-    const change: Change = {
-      type: "update-deployment-trigger",
-      serviceName: "web",
-      serviceId: "svc-1",
-      triggerId: "trigger-1",
-      branch: "develop",
-    };
-    expect(changeLabel(change)).toBe("update-deployment-trigger: web → branch: develop");
-  });
-
-  test("create-service-domain", () => {
-    const change: Change = {
-      type: "create-service-domain",
-      serviceName: "web",
-      serviceId: "svc-1",
-    };
-    expect(changeLabel(change)).toBe("create-service-domain: web");
-  });
-
-  test("delete-service-domain", () => {
-    const change: Change = {
-      type: "delete-service-domain",
-      serviceName: "web",
-      serviceId: "svc-1",
-      domainId: "svcdom-1",
-    };
-    expect(changeLabel(change)).toBe("delete-service-domain: web");
-  });
-
-  test("create-tcp-proxy", () => {
-    const change: Change = {
-      type: "create-tcp-proxy",
-      serviceName: "db",
-      serviceId: "svc-db",
-      applicationPort: 5432,
-    };
-    expect(changeLabel(change)).toBe("create-tcp-proxy: db (port 5432)");
-  });
-
-  test("delete-tcp-proxy", () => {
-    const change: Change = {
-      type: "delete-tcp-proxy",
-      serviceName: "db",
-      serviceId: "svc-db",
-      proxyId: "proxy-1",
-    };
-    expect(changeLabel(change)).toBe("delete-tcp-proxy: db");
-  });
-
-  test("update-service-limits", () => {
-    const change: Change = {
-      type: "update-service-limits",
-      serviceName: "web",
-      serviceId: "svc-1",
-      limits: { memoryGB: 8, vCPUs: 4 },
-    };
-    expect(changeLabel(change)).toBe("update-service-limits: web");
+    for (const { change, mustContain } of changes) {
+      const label = changeLabel(change);
+      for (const text of mustContain) {
+        expect(label).toContain(text);
+      }
+    }
   });
 });
 
@@ -314,10 +287,9 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("CREATE services");
+    expect(output).toContain("SERVICES");
     expect(output).toContain("frontend");
     expect(output).toContain("github.com/org/app");
-    expect(output).toContain("DELETE services");
     expect(output).toContain("legacy");
   });
 
@@ -382,7 +354,7 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("UPDATE service settings");
+    expect(output).toContain("SERVICE SETTINGS");
     expect(output).toContain("api");
     expect(output).toContain("startCommand");
   });
