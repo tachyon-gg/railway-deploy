@@ -1910,4 +1910,127 @@ describe("computeChangeset", () => {
     const staticIps = changeset.changes.find((c) => c.type === "enable-static-ips");
     expect(staticIps).toBeDefined();
   });
+
+  test("branch change without deployment trigger emits no change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          branch: "develop",
+          // No deploymentTriggerId — image-based service
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const triggerChanges = changeset.changes.filter((c) => c.type === "update-deployment-trigger");
+    expect(triggerChanges).toHaveLength(0);
+  });
+
+  test("service domain targetPort change generates delete + create", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 8080 },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayDomain: { targetPort: 3000 },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, {
+      web: { id: "svcdom-1", domain: "web.up.railway.app" },
+    });
+
+    const del = changeset.changes.find((c) => c.type === "delete-service-domain");
+    expect(del).toBeDefined();
+    const create = changeset.changes.find((c) => c.type === "create-service-domain");
+    expect(create).toBeDefined();
+    if (create?.type === "create-service-domain") {
+      expect(create.targetPort).toBe(8080);
+    }
+  });
+
+  test("disable-static-ips when current has it but desired doesn't", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          // No staticOutboundIps
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          staticOutboundIps: true,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const disable = changeset.changes.find((c) => c.type === "disable-static-ips");
+    expect(disable).toBeDefined();
+  });
+
+  test("enable-static-ips when desired has it but current doesn't", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          staticOutboundIps: true,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const enable = changeset.changes.find((c) => c.type === "enable-static-ips");
+    expect(enable).toBeDefined();
+  });
 });

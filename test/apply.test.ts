@@ -850,6 +850,134 @@ describe("applyChangeset", () => {
     expect(input.registryCredentials).toEqual({ username: "deploy-user", password: "deploy-pass" });
   });
 
+  test("delete-service-domain calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "delete-service-domain",
+      serviceName: "web",
+      domainId: "svcdom-1",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables).toEqual({ id: "svcdom-1" });
+  });
+
+  test("delete-tcp-proxy calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "delete-tcp-proxy",
+      serviceName: "db",
+      proxyId: "proxy-1",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables).toEqual({ id: "proxy-1" });
+  });
+
+  test("enable-static-ips calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "enable-static-ips",
+      serviceName: "web",
+      serviceId: "svc-1",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("disable-static-ips calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "disable-static-ips",
+      serviceName: "web",
+      serviceId: "svc-1",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.applied).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("create-service-domain without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "create-service-domain",
+      serviceName: "ghost",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("create-tcp-proxy without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "create-tcp-proxy",
+      serviceName: "ghost",
+      applicationPort: 5432,
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("enable-static-ips without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "enable-static-ips",
+      serviceName: "ghost",
+      serviceId: "",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("disable-static-ips without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "disable-static-ips",
+      serviceName: "ghost",
+      serviceId: "",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("update-service-limits without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "update-service-limits",
+      serviceName: "ghost",
+      serviceId: "",
+      limits: { memoryGB: 8 },
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
   test("create-volume without serviceId throws", async () => {
     const { client } = mockClient();
     const change: Change = {
