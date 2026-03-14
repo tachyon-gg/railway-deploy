@@ -1,8 +1,13 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "fs";
+import { createRequire } from "module";
 import { resolve } from "path";
 import { createInterface } from "readline";
 import { parse as parseYaml } from "yaml";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 import { loadEnvironmentConfig } from "./config/loader.js";
 import { validateEnvironmentConfig } from "./config/schema.js";
 import { loadEnvFile } from "./config/variables.js";
@@ -16,7 +21,7 @@ interface CliOptions {
   yes?: boolean;
   envFile?: string;
   verbose?: boolean;
-  noColor?: boolean;
+  color?: boolean;
   validate?: boolean;
 }
 
@@ -32,15 +37,31 @@ async function confirm(message: string): Promise<boolean> {
 
 const program = new Command()
   .name("railway-deploy")
-  .description("Declarative Railway infrastructure management")
-  .version("0.1.0")
-  .argument("<config>", "Path to environment YAML config file")
-  .option("--apply", "Execute changes (default: dry-run)")
-  .option("-y, --yes", "Skip confirmation prompts for destructive operations")
-  .option("--env-file <path>", "Load .env file for ${VAR} resolution")
-  .option("-v, --verbose", "Show detailed diffs (old → new values)")
-  .option("--no-color", "Disable ANSI color output")
-  .option("--validate", "Validate config without connecting to Railway")
+  .description(
+    `Declarative Railway infrastructure management.
+
+Define your Railway services, variables, domains, volumes, and more in YAML,
+and railway-deploy will diff against the live state and apply changes.
+
+Examples:
+  $ railway-deploy environments/production.yaml
+  $ railway-deploy --apply -y environments/staging.yaml
+  $ railway-deploy --validate environments/production.yaml
+  $ railway-deploy --env-file .env --apply environments/production.yaml
+
+Environment:
+  RAILWAY_TOKEN    Railway API token (required for all operations except --validate)
+
+Docs: https://github.com/tachyon-gg/railway-deploy`,
+  )
+  .version(version)
+  .argument("<config>", "path to environment YAML config file")
+  .option("--apply", "execute changes (default is dry-run)")
+  .option("--env-file <path>", "load .env file for ${VAR} resolution")
+  .option("--no-color", "disable colored output")
+  .option("--validate", "validate config without connecting to Railway")
+  .option("-v, --verbose", "show detailed diffs with old and new values")
+  .option("-y, --yes", "skip confirmation prompts for destructive operations")
   .action(async (configPath: string, opts: CliOptions) => {
     try {
       await run(configPath, opts);
@@ -132,7 +153,7 @@ async function run(configPath: string, opts: CliOptions) {
     tcpProxyMap,
   );
 
-  const noColor = opts.noColor ?? false;
+  const noColor = opts.color === false;
   const verbose = opts.verbose ?? false;
 
   printChangeset(changeset, {
