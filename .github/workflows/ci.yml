@@ -24,5 +24,23 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
-      - name: Unit tests
-        run: bun run test
+      - name: Unit tests with coverage
+        run: bun run test:coverage
+
+      - name: Integration tests
+        if: env.RAILWAY_TOKEN != ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TEST_PROJECT_ID: ${{ secrets.RAILWAY_TEST_PROJECT_ID }}
+          RAILWAY_TEST_PROJECT_NAME: ${{ secrets.RAILWAY_TEST_PROJECT_NAME }}
+          RAILWAY_TEST_ENV_NAME: ${{ secrets.RAILWAY_TEST_ENV_NAME }}
+          RAILWAY_TEST_ENV_ID: ${{ secrets.RAILWAY_TEST_ENV_ID }}
+        run: bun test --bail --timeout 30000 test/integration/
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

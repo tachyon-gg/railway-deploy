@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "codegen": "graphql-codegen --config codegen.ts",
     "test": "bun test --bail --test-name-pattern '^(?!Railway Integration)' test/",
+    "test:coverage": "bun test --bail --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage test/cli.test.ts test/diff.test.ts test/loader.test.ts test/params.test.ts test/variables.test.ts",
     "test:integration": "bun test --bail --timeout 30000 --env-file .env.test test/integration/",
     "test:all": "bun test --bail --timeout 30000 --env-file .env.test test/",
     "lint": "biome check .",
