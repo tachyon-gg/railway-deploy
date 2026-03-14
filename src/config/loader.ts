@@ -27,21 +27,11 @@ function normalizeDomainEntry(entry: DomainEntry): { domain: string; targetPort?
 }
 
 /**
- * Normalize singular `domain` and plural `domains` into a single array.
+ * Normalize `domains` into a single array.
  */
-function normalizeDomains(
-  domain?: DomainEntry,
-  domains?: DomainEntry[],
-): Array<{ domain: string; targetPort?: number }> {
-  const result: Array<{ domain: string; targetPort?: number }> = [];
-  if (domains) result.push(...domains.map(normalizeDomainEntry));
-  if (domain) {
-    const normalized = normalizeDomainEntry(domain);
-    if (!result.some((d) => d.domain === normalized.domain)) {
-      result.push(normalized);
-    }
-  }
-  return result;
+function normalizeDomains(domains?: DomainEntry[]): Array<{ domain: string; targetPort?: number }> {
+  if (!domains) return [];
+  return domains.map(normalizeDomainEntry);
 }
 
 /**
@@ -210,7 +200,6 @@ function resolveService(
   const checkSuites = template?.check_suites ?? entry.check_suites;
   const registryCredentials = template?.registry_credentials ?? entry.registry_credentials;
   const railwayDomain = template?.railway_domain ?? entry.railway_domain;
-  const tcpProxy = template?.tcp_proxy ?? entry.tcp_proxy;
   const tcpProxies = template?.tcp_proxies ?? entry.tcp_proxies;
   const limits = template?.limits ?? entry.limits;
   const railwayConfigFile = template?.railway_config_file
@@ -221,15 +210,12 @@ function resolveService(
   // Normalize domains from template and entry
   let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
   if (template) {
-    const tplDomain = template.domain
-      ? (expandParamsDeep(template.domain, params) as DomainEntry)
-      : undefined;
     const tplDomains = template.domains
       ? (expandParamsDeep(template.domains, params) as DomainEntry[])
       : undefined;
-    templateDomains = normalizeDomains(tplDomain, tplDomains);
+    templateDomains = normalizeDomains(tplDomains);
   }
-  const entryDomains = normalizeDomains(entry.domain, entry.domains);
+  const entryDomains = normalizeDomains(entry.domains);
 
   // Inline source override
   if (entry.source) source = entry.source;
@@ -318,11 +304,7 @@ function resolveService(
     }
     // railwayDomain === false means no railway domain (don't set)
   }
-  // Normalize tcp_proxy / tcp_proxies into tcpProxies
-  const allTcpPorts: number[] = [];
-  if (tcpProxies) allTcpPorts.push(...tcpProxies);
-  if (tcpProxy !== undefined && !allTcpPorts.includes(tcpProxy)) allTcpPorts.push(tcpProxy);
-  if (allTcpPorts.length > 0) service.tcpProxies = allTcpPorts;
+  if (tcpProxies && tcpProxies.length > 0) service.tcpProxies = tcpProxies;
   if (limits) {
     service.limits = {
       ...(limits.memory_gb !== undefined ? { memoryGB: limits.memory_gb } : {}),

@@ -158,7 +158,6 @@ domains:
   - app.example.com                # Simple domain
   - domain: api.example.com        # Domain with target port
     target_port: 8080
-domain: simple.example.com         # Shorthand for a single domain
 
 # Railway-provided domain
 railway_domain: true               # Generate a .up.railway.app domain
@@ -166,8 +165,7 @@ railway_domain:                    # ...with a specific target port
   target_port: 3000
 
 # TCP proxies (for non-HTTP services like databases)
-tcp_proxy: 5432                    # Single port
-tcp_proxies: [5432, 6379]          # Multiple ports
+tcp_proxies: [5432, 6379]          # One or more ports
 
 # Outbound networking
 ipv6_egress: true                  # Enable IPv6 outbound traffic
@@ -232,7 +230,8 @@ variables:
   APP_VERSION: "%{tag}"
   DATABASE_URL: ${{Postgres.DATABASE_URL}}
 
-domain: "%{tag}.example.com"
+domains:
+  - "%{tag}.example.com"
 
 healthcheck:
   path: /health
@@ -309,7 +308,7 @@ services:
     volume:
       mount: /var/lib/postgresql/data
       name: pg-data
-    tcp_proxy: 5432
+    tcp_proxies: [5432]
     variables:
       POSTGRES_DB: myapp
 
@@ -319,7 +318,7 @@ services:
     volume:
       mount: /data
       name: redis-data
-    tcp_proxy: 6379
+    tcp_proxies: [6379]
 
   worker:
     template: ../services/worker.yaml

@@ -29,7 +29,8 @@ variables:
   DB_URL: \${{Postgres.DATABASE_URL}}
   REPLICAS: "%{replicas}"
 
-domain: "%{environment}.example.com"
+domains:
+  - "%{environment}.example.com"
 `,
   );
 
@@ -254,7 +255,7 @@ services:
 `,
   );
 
-  // Write an environment file with tcp_proxy (singular)
+  // Write an environment file with tcp_proxies (single port)
   writeFileSync(
     join(ENVS_DIR, "tcp-proxy-single.yaml"),
     `
@@ -265,7 +266,8 @@ services:
   db:
     source:
       image: postgres:16
-    tcp_proxy: 5432
+    tcp_proxies:
+      - 5432
 `,
   );
 
@@ -614,7 +616,7 @@ services:
     expect(web.railwayDomain).toEqual({ targetPort: 8080 });
   });
 
-  test("loads tcp_proxy (singular) into tcpProxies array", () => {
+  test("loads tcp_proxies (single port) into tcpProxies array", () => {
     const result = loadEnvironmentConfig(join(ENVS_DIR, "tcp-proxy-single.yaml"));
     const db = result.state.services.db;
 
