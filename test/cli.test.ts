@@ -30,6 +30,20 @@ services:
       image: nginx:latest
 `,
   );
+
+  writeFileSync(
+    join(FIXTURE_DIR, "with-env-vars.yaml"),
+    `
+project: Test
+environment: alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    variables:
+      SECRET: "\${UNSET_CLI_VAR}"
+`,
+  );
 });
 
 afterAll(() => {
@@ -96,6 +110,12 @@ describe("CLI", () => {
   test("--validate with invalid config exits 1", async () => {
     const { exitCode } = await run([join(FIXTURE_DIR, "invalid.yaml"), "--validate"]);
     expect(exitCode).toBe(1);
+  });
+
+  test("--validate with unresolved env vars exits 0", async () => {
+    const { stdout, exitCode } = await run([join(FIXTURE_DIR, "with-env-vars.yaml"), "--validate"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("valid");
   });
 
   test("nonexistent config file exits 1", async () => {

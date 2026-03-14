@@ -646,4 +646,29 @@ services:
       { domain: "api.example.com" },
     ]);
   });
+
+  test("lenient mode does not throw on missing env vars", () => {
+    writeFileSync(
+      join(ENVS_DIR, "env-vars.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    variables:
+      SECRET: "\${UNDEFINED_SECRET}"
+`,
+    );
+
+    // Strict mode throws
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "env-vars.yaml"))).toThrow(
+      "UNDEFINED_SECRET",
+    );
+
+    // Lenient mode succeeds
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "env-vars.yaml"), { lenient: true });
+    expect(result.state.services.web.variables.SECRET).toBe("${UNDEFINED_SECRET}");
+  });
 });
