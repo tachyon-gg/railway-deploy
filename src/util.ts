@@ -1,7 +1,9 @@
+import equal from "fast-deep-equal";
+
 /**
  * Deep equality comparison for objects, arrays, and primitives.
- * Order-independent for object keys. Uses Bun's built-in implementation.
+ * Order-independent for object keys.
  */
 export function deepEqual(a: unknown, b: unknown): boolean {
-  return Bun.deepEquals(a, b);
+  return equal(a, b);
 }
