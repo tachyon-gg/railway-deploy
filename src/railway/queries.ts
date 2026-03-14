@@ -172,6 +172,9 @@ export async function fetchCurrentState(
         result.value.serviceId,
         result.value.proxies.map((p) => ({ id: p.id, applicationPort: p.applicationPort })),
       );
+    } else if (result.status === "rejected") {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      console.warn(`  Warning: Failed to fetch TCP proxies for a service: ${reason}`);
     }
   }
 
@@ -192,6 +195,9 @@ export async function fetchCurrentState(
       if (lim.memoryGB !== undefined || lim.vCPUs !== undefined) {
         limitsLookup.set(result.value.serviceId, lim);
       }
+    } else if (result.status === "rejected") {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      console.warn(`  Warning: Failed to fetch resource limits for a service: ${reason}`);
     }
   }
 
@@ -210,6 +216,9 @@ export async function fetchCurrentState(
   for (const result of egressResults) {
     if (result.status === "fulfilled" && result.value.gateways.length > 0) {
       egressLookup.set(result.value.serviceId, true);
+    } else if (result.status === "rejected") {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      console.warn(`  Warning: Failed to fetch egress gateways for a service: ${reason}`);
     }
   }
 

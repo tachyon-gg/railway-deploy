@@ -188,6 +188,10 @@ export function computeChangeset(
               ? { checkSuites: desiredSvc.checkSuites }
               : {}),
           });
+        } else {
+          console.warn(
+            `  Warning: "${name}" has branch/check_suites in config but no deployment trigger exists — skipping`,
+          );
         }
       }
 
