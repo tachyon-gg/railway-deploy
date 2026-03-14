@@ -1,0 +1,27 @@
+name: Integration Tests
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Integration tests
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TEST_PROJECT_ID: ${{ secrets.RAILWAY_TEST_PROJECT_ID }}
+          RAILWAY_TEST_PROJECT_NAME: ${{ secrets.RAILWAY_TEST_PROJECT_NAME }}
+          RAILWAY_TEST_ENV_NAME: ${{ secrets.RAILWAY_TEST_ENV_NAME }}
+          RAILWAY_TEST_ENV_ID: ${{ secrets.RAILWAY_TEST_ENV_ID }}
+        run: bun test --bail --timeout 30000 test/integration/
