@@ -13,6 +13,7 @@ import { readFileSync } from "fs";
 export function resolveEnvVars(
   variables: Record<string, string | null>,
   env: Record<string, string | undefined> = process.env,
+  lenient = false,
 ): Record<string, string> {
   const resolved: Record<string, string> = {};
 
@@ -20,7 +21,7 @@ export function resolveEnvVars(
     // null means "delete this variable" — skip it in resolved output
     if (value === null) continue;
 
-    resolved[key] = resolveEnvVarString(value, env);
+    resolved[key] = resolveEnvVarString(value, env, lenient);
   }
 
   return resolved;
@@ -33,11 +34,13 @@ export function resolveEnvVars(
 export function resolveEnvVarString(
   input: string,
   env: Record<string, string | undefined> = process.env,
+  lenient = false,
 ): string {
   // Match ${VAR} but NOT ${{VAR}} — use negative lookahead for second brace
-  return input.replace(/\$\{(?!\{)([^}]+)\}/g, (_match, name: string) => {
+  return input.replace(/\$\{(?!\{)([^}]+)\}/g, (match, name: string) => {
     const value = env[name];
     if (value === undefined) {
+      if (lenient) return match; // Leave unresolved in validate mode
       throw new Error(`Environment variable "${name}" is not set (referenced as \${${name}})`);
     }
     return value;

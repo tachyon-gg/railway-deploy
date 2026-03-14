@@ -43,7 +43,10 @@ function normalizeDomains(domains?: DomainEntry[]): Array<{ domain: string; targ
  *          and the project/environment names from the config.
  * @throws On missing file, invalid YAML, schema validation failure, or missing template.
  */
-export function loadEnvironmentConfig(envFilePath: string): {
+export function loadEnvironmentConfig(
+  envFilePath: string,
+  options?: { lenient?: boolean },
+): {
   state: State;
   deletedVars: Record<string, string[]>;
   deletedSharedVars: string[];
@@ -80,8 +83,10 @@ export function loadEnvironmentConfig(envFilePath: string): {
   const services: Record<string, ServiceState> = {};
   const deletedVars: Record<string, string[]> = {};
 
+  const lenient = options?.lenient ?? false;
+
   for (const [name, entry] of Object.entries(config.services)) {
-    const { service, deleted } = resolveService(name, entry, envDir);
+    const { service, deleted } = resolveService(name, entry, envDir, lenient);
     services[name] = service;
     if (deleted.length > 0) {
       deletedVars[name] = deleted;
@@ -89,7 +94,9 @@ export function loadEnvironmentConfig(envFilePath: string): {
   }
 
   // Resolve shared variables
-  const resolvedSharedVars = config.shared_variables ? resolveEnvVars(config.shared_variables) : {};
+  const resolvedSharedVars = config.shared_variables
+    ? resolveEnvVars(config.shared_variables, process.env, lenient)
+    : {};
   const deletedSharedVars = config.shared_variables
     ? getDeletedVariables(config.shared_variables)
     : [];
@@ -124,6 +131,7 @@ function resolveService(
   name: string,
   entry: ServiceEntry,
   envDir: string,
+  lenient = false,
 ): { service: ServiceState; deleted: string[] } {
   let template: ServiceTemplate | undefined;
 
@@ -234,11 +242,11 @@ function resolveService(
   const deleted = getDeletedVariables(mergedVars);
 
   // Resolve ${ENV_VAR} in variables
-  const resolvedVars = resolveEnvVars(mergedVars);
+  const resolvedVars = resolveEnvVars(mergedVars, process.env, lenient);
 
   // Resolve ${ENV_VAR} in domains if present, and deduplicate by domain name
   const resolvedDomainsRaw = domains.map((d) => ({
-    domain: resolveEnvVarString(d.domain),
+    domain: resolveEnvVarString(d.domain, process.env, lenient),
     ...(d.targetPort !== undefined ? { targetPort: d.targetPort } : {}),
   }));
   const seenDomains = new Set<string>();
@@ -292,8 +300,8 @@ function resolveService(
   if (checkSuites !== undefined) service.checkSuites = checkSuites;
   if (registryCredentials) {
     service.registryCredentials = {
-      username: resolveEnvVarString(registryCredentials.username),
-      password: resolveEnvVarString(registryCredentials.password),
+      username: resolveEnvVarString(registryCredentials.username, process.env, lenient),
+      password: resolveEnvVarString(registryCredentials.password, process.env, lenient),
     };
   }
   if (railwayDomain !== undefined) {

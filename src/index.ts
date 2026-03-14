@@ -68,7 +68,8 @@ async function run(configPath: string, opts: CliOptions) {
     validateEnvironmentConfig(parsed);
 
     // Also try full config load to catch template/param issues
-    loadEnvironmentConfig(configPath);
+    // Use lenient mode so missing ${ENV_VAR} references don't fail validation
+    loadEnvironmentConfig(configPath, { lenient: true });
 
     console.log("Config is valid.");
     process.exit(0);
