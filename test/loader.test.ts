@@ -746,4 +746,52 @@ services:
       "built-in parameter",
     );
   });
+
+  test("param placeholders accepted in validated fields (cron, builder, restart_policy, volume mount)", () => {
+    writeFileSync(
+      join(SERVICES_DIR, "param-validated.yaml"),
+      `
+params:
+  schedule:
+    required: true
+  policy:
+    required: true
+  build:
+    required: true
+  mount:
+    required: true
+
+source:
+  image: nginx:latest
+cron_schedule: "%{schedule}"
+restart_policy: "%{policy}"
+builder: "%{build}"
+volume:
+  mount: "%{mount}"
+  name: data
+`,
+    );
+    writeFileSync(
+      join(ENVS_DIR, "param-validated.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  worker:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "param-validated.yaml"));
+    const svc = result.state.services.worker;
+    expect(svc.cronSchedule).toBe("*/5 * * * *");
+    expect(svc.restartPolicy).toBe("ON_FAILURE");
+    expect(svc.builder).toBe("NIXPACKS");
+    expect(svc.volume?.mount).toBe("/data");
+  });
 });
