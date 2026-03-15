@@ -38,37 +38,6 @@ interface ApplyOptions {
   noColor?: boolean;
 }
 
-/**
- * Determine if a change will trigger a Railway redeploy.
- */
-function willTriggerDeploy(change: Change, skipDeploys: boolean): boolean {
-  switch (change.type) {
-    case "create-service":
-    case "update-service-settings":
-    case "delete-variables":
-    case "delete-shared-variables":
-      return true;
-    case "upsert-variables":
-    case "upsert-shared-variables":
-      return !skipDeploys;
-    case "delete-service":
-    case "create-domain":
-    case "delete-domain":
-    case "create-volume":
-    case "delete-volume":
-    case "update-deployment-trigger":
-    case "create-service-domain":
-    case "delete-service-domain":
-    case "create-tcp-proxy":
-    case "delete-tcp-proxy":
-    case "update-service-limits":
-    case "enable-static-ips":
-    case "disable-static-ips":
-    case "create-bucket":
-    case "delete-bucket":
-      return false;
-  }
-}
 
 // ANSI color helpers (used in apply output)
 function green(text: string, noColor: boolean): string {
@@ -77,9 +46,7 @@ function green(text: string, noColor: boolean): string {
 function red(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[31m${text}\x1b[0m`;
 }
-function dim(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[2m${text}\x1b[0m`;
-}
+
 
 /**
  * Execute a changeset against Railway, applying each change sequentially
@@ -135,10 +102,7 @@ export async function applyChangeset(
     try {
       await applyChange(client, change, projectId, environmentId, createdServiceIds, skipDeploys);
       applied.push(change);
-      const deployNote = willTriggerDeploy(change, skipDeploys)
-        ? dim(" (triggers deploy)", noColor)
-        : "";
-      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}${deployNote}`);
+      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failed.push({ change, error: message });
