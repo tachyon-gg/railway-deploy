@@ -364,12 +364,13 @@ function diffServiceSettings(
   if (desired.ipv6EgressEnabled !== current.ipv6EgressEnabled) {
     settings.ipv6EgressEnabled = desired.ipv6EgressEnabled ?? null;
   }
-  // Group 3: registry credentials (can't diff — always include if desired has them)
-  if (desired.registryCredentials) {
-    settings.registryCredentials = desired.registryCredentials;
-  }
   if (desired.railwayConfigFile !== current.railwayConfigFile) {
     settings.railwayConfigFile = desired.railwayConfigFile ?? null;
+  }
+  // Registry credentials can't be diffed (Railway doesn't return them).
+  // Always include if specified — user needs to see they're being sent.
+  if (desired.registryCredentials) {
+    settings.registryCredentials = desired.registryCredentials;
   }
 
   if (Object.keys(settings).length > 0) {

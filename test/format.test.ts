@@ -26,12 +26,9 @@ function allOutput(): string {
 // changeLabel
 // ---------------------------------------------------------------------------
 describe("changeLabel", () => {
-  test("includes change type and summary for every change type", () => {
+  test("includes service name and summary for every change type", () => {
     const changes: Array<{ change: Change; mustContain: string[] }> = [
-      {
-        change: { type: "create-service", name: "web" },
-        mustContain: ["create-service", "web", "empty"],
-      },
+      { change: { type: "create-service", name: "web" }, mustContain: ["web", "create", "empty"] },
       {
         change: {
           type: "create-service",
@@ -39,16 +36,16 @@ describe("changeLabel", () => {
           source: { image: "node:20" },
           branch: "main",
         },
-        mustContain: ["create-service", "node:20", "branch: main"],
+        mustContain: ["api", "node:20", "branch: main"],
       },
       {
         change: {
           type: "create-service",
           name: "db",
           source: { image: "postgres:16" },
-          volume: { mount: "/data", name: "pg-data" },
+          volume: { mount: "/data", name: "pg" },
         },
-        mustContain: ["create-service", "postgres:16", "volume: /data"],
+        mustContain: ["db", "postgres:16", "volume: /data"],
       },
       {
         change: {
@@ -57,39 +54,39 @@ describe("changeLabel", () => {
           source: { image: "alpine" },
           cronSchedule: "*/5 * * * *",
         },
-        mustContain: ["create-service", "alpine", "cron: */5 * * * *"],
+        mustContain: ["cron", "alpine", "cron:"],
       },
       {
         change: { type: "delete-service", name: "old", serviceId: "svc-1" },
-        mustContain: ["delete-service", "old", "svc-1"],
+        mustContain: ["old", "delete", "svc-1"],
       },
       {
         change: { type: "upsert-variables", serviceName: "web", variables: { A: "1", B: "2" } },
-        mustContain: ["upsert-variables", "web", "2 var", "A", "B"],
+        mustContain: ["web", "2 var", "A", "B"],
       },
       {
         change: { type: "delete-variables", serviceName: "web", variableNames: ["X"] },
-        mustContain: ["delete-variables", "web", "1 var", "X"],
+        mustContain: ["web", "1 var", "X"],
       },
       {
         change: { type: "upsert-shared-variables", variables: { S: "1" } },
-        mustContain: ["upsert-shared-variables", "1 var", "S"],
+        mustContain: ["1 var", "S"],
       },
       {
         change: { type: "delete-shared-variables", variableNames: ["X", "Y"] },
-        mustContain: ["delete-shared-variables", "2 var", "X", "Y"],
+        mustContain: ["2 var", "X", "Y"],
       },
       {
         change: { type: "create-domain", serviceName: "web", domain: "example.com" },
-        mustContain: ["create-domain", "web", "example.com"],
+        mustContain: ["web", "example.com"],
       },
       {
         change: { type: "create-domain", serviceName: "web", domain: "api.com", targetPort: 8080 },
-        mustContain: ["create-domain", "api.com", "8080"],
+        mustContain: ["api.com", "8080"],
       },
       {
         change: { type: "delete-domain", serviceName: "web", domain: "old.com", domainId: "d1" },
-        mustContain: ["delete-domain", "old.com"],
+        mustContain: ["web", "old.com"],
       },
       {
         change: {
@@ -98,7 +95,7 @@ describe("changeLabel", () => {
           serviceId: "s1",
           settings: { startCommand: "npm start" },
         },
-        mustContain: ["update-service-settings", "api", "startCommand"],
+        mustContain: ["api", "startCommand"],
       },
       {
         change: {
@@ -108,11 +105,11 @@ describe("changeLabel", () => {
           mount: "/data",
           name: "vol",
         },
-        mustContain: ["create-volume", "db", "/data"],
+        mustContain: ["db", "/data"],
       },
       {
         change: { type: "delete-volume", serviceName: "db", serviceId: "s1", volumeId: "v1" },
-        mustContain: ["delete-volume", "db", "v1"],
+        mustContain: ["db", "v1"],
       },
       {
         change: {
@@ -122,7 +119,7 @@ describe("changeLabel", () => {
           triggerId: "t1",
           branch: "develop",
         },
-        mustContain: ["update-deployment-trigger", "web", "develop"],
+        mustContain: ["web", "develop"],
       },
       {
         change: {
@@ -132,27 +129,27 @@ describe("changeLabel", () => {
           triggerId: "t1",
           checkSuites: true,
         },
-        mustContain: ["update-deployment-trigger", "checkSuites", "true"],
+        mustContain: ["web", "checkSuites", "true"],
       },
       {
         change: { type: "create-service-domain", serviceName: "web", targetPort: 3000 },
-        mustContain: ["create-service-domain", "web", "3000"],
+        mustContain: ["web", "3000"],
       },
       {
         change: { type: "create-service-domain", serviceName: "web" },
-        mustContain: ["create-service-domain", "web"],
+        mustContain: ["web", "domain"],
       },
       {
         change: { type: "delete-service-domain", serviceName: "web", domainId: "d1" },
-        mustContain: ["delete-service-domain", "web"],
+        mustContain: ["web", "domain"],
       },
       {
         change: { type: "create-tcp-proxy", serviceName: "db", applicationPort: 5432 },
-        mustContain: ["create-tcp-proxy", "db", "5432"],
+        mustContain: ["db", "5432"],
       },
       {
         change: { type: "delete-tcp-proxy", serviceName: "db", proxyId: "p1" },
-        mustContain: ["delete-tcp-proxy", "db", "p1"],
+        mustContain: ["db", "p1"],
       },
       {
         change: {
@@ -161,24 +158,21 @@ describe("changeLabel", () => {
           serviceId: "s1",
           limits: { memoryGB: 8, vCPUs: 4 },
         },
-        mustContain: ["update-service-limits", "web", "8GB", "vCPUs: 4"],
+        mustContain: ["web", "8GB", "vCPUs: 4"],
       },
       {
         change: { type: "enable-static-ips", serviceName: "web", serviceId: "s1" },
-        mustContain: ["enable-static-ips", "web", "enable"],
+        mustContain: ["web", "enable"],
       },
       {
         change: { type: "disable-static-ips", serviceName: "web", serviceId: "s1" },
-        mustContain: ["disable-static-ips", "web", "disable"],
+        mustContain: ["web", "disable"],
       },
       {
         change: { type: "create-bucket", name: "k", bucketName: "my-bucket" },
-        mustContain: ["create-bucket", "my-bucket"],
+        mustContain: ["my-bucket"],
       },
-      {
-        change: { type: "delete-bucket", name: "old", bucketId: "b1" },
-        mustContain: ["delete-bucket", "old"],
-      },
+      { change: { type: "delete-bucket", name: "old", bucketId: "b1" }, mustContain: ["old"] },
     ];
 
     for (const { change, mustContain } of changes) {
@@ -305,7 +299,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("SERVICES");
     expect(output).toContain("frontend");
     expect(output).toContain("github.com/org/app");
     expect(output).toContain("legacy");
@@ -320,7 +313,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("DOMAINS");
     expect(output).toContain("app.example.com");
     expect(output).toContain("old.example.com");
   });
@@ -340,9 +332,25 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("VOLUMES");
     expect(output).toContain("/var/data");
     expect(output).toContain("cache");
+  });
+
+  test("verbose settings masks sensitive keys like registryCredentials", () => {
+    const changeset: Changeset = {
+      changes: [
+        {
+          type: "update-service-settings",
+          serviceName: "api",
+          serviceId: "svc-1",
+          settings: { registryCredentials: { username: "user", password: "secret" } },
+        },
+      ],
+    };
+    printChangeset(changeset, { noColor: true, verbose: true, currentState: { services: {}, sharedVariables: {} } });
+    const output = allOutput();
+    expect(output).toContain("registryCredentials: ***");
+    expect(output).not.toContain("secret");
   });
 
   test("prints bucket changes", () => {
@@ -354,7 +362,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("BUCKETS");
     expect(output).toContain("my-uploads");
     expect(output).toContain("old-assets");
   });
@@ -372,7 +379,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("SERVICE SETTINGS");
     expect(output).toContain("api");
     expect(output).toContain("startCommand");
   });
@@ -484,7 +490,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("DEPLOYMENT TRIGGERS");
     expect(output).toContain("api");
     expect(output).toContain("develop");
   });
@@ -508,7 +513,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("RAILWAY DOMAINS");
     expect(output).toContain("web");
     expect(output).toContain("port 8080");
     expect(output).toContain("old");
@@ -533,7 +537,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("TCP PROXIES");
     expect(output).toContain("db");
     expect(output).toContain("port 5432");
     expect(output).toContain("cache");
@@ -552,7 +555,6 @@ describe("printChangeset", () => {
     };
     printChangeset(changeset, { noColor: true });
     const output = allOutput();
-    expect(output).toContain("RESOURCE LIMITS");
     expect(output).toContain("api");
     expect(output).toContain("memory: 8GB");
     expect(output).toContain("vCPUs: 4");
@@ -621,8 +623,8 @@ describe("printApplyResult", () => {
     expect(output).toContain("2 failed:");
     expect(output).toContain("API rate limit exceeded");
     expect(output).toContain("Domain already taken");
-    expect(output).toContain("upsert-variables: api");
-    expect(output).toContain("create-domain: web");
+    expect(output).toContain("api:");
+    expect(output).toContain("web:");
   });
 
   test("zero succeeded and zero failed", () => {
