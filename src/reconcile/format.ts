@@ -1,4 +1,5 @@
 import type { Change, Changeset } from "../types/changeset.js";
+import type { ServiceState } from "../types/state.js";
 
 // ANSI color helpers
 function green(text: string, noColor: boolean): string {
@@ -271,7 +272,7 @@ export function printChangeset(
     verbose?: boolean;
     noColor?: boolean;
     currentState?: {
-      services: Record<string, { variables: Record<string, string> }>;
+      services: Record<string, ServiceState>;
       sharedVariables: Record<string, string>;
     };
   },
@@ -340,7 +341,7 @@ export function printChangeset(
             continue;
           }
           const currentSvc = options?.currentState?.services[change.serviceName];
-          const oldVal = currentSvc ? (currentSvc as Record<string, unknown>)[key] : undefined;
+          const oldVal = currentSvc ? currentSvc[key as keyof ServiceState] : undefined;
           const oldStr = oldVal !== undefined ? JSON.stringify(oldVal) : "(unset)";
           const newStr = value === null ? "(unset)" : JSON.stringify(value);
           console.log(`    ${icon} ${key}: ${oldStr} → ${newStr}`);
