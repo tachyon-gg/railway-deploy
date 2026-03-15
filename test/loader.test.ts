@@ -838,4 +838,48 @@ services:
       "volume.mount",
     );
   });
+
+  test("throws on invalid cron_schedule after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-cron-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "not-a-cron"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-cron-param.yaml"))).toThrow(
+      "cron_schedule",
+    );
+  });
+
+  test("throws on invalid restart_policy after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-policy-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: SOMETIMES
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-policy-param.yaml"))).toThrow(
+      "restart_policy",
+    );
+  });
 });
