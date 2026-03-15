@@ -746,4 +746,140 @@ services:
       "built-in parameter",
     );
   });
+
+  test("param placeholders accepted in validated fields (cron, builder, restart_policy, volume mount)", () => {
+    writeFileSync(
+      join(SERVICES_DIR, "param-validated.yaml"),
+      `
+params:
+  schedule:
+    required: true
+  policy:
+    required: true
+  build:
+    required: true
+  mount:
+    required: true
+
+source:
+  image: nginx:latest
+cron_schedule: "%{schedule}"
+restart_policy: "%{policy}"
+builder: "%{build}"
+volume:
+  mount: "%{mount}"
+  name: data
+`,
+    );
+    writeFileSync(
+      join(ENVS_DIR, "param-validated.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  worker:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "param-validated.yaml"));
+    const svc = result.state.services.worker;
+    expect(svc.cronSchedule).toBe("*/5 * * * *");
+    expect(svc.restartPolicy).toBe("ON_FAILURE");
+    expect(svc.builder).toBe("NIXPACKS");
+    expect(svc.volume?.mount).toBe("/data");
+  });
+
+  test("throws on invalid builder after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-builder-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: INVALID_BUILDER
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-builder-param.yaml"))).toThrow(
+      "builder",
+    );
+  });
+
+  test("throws on invalid volume mount after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-mount-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: relative/path
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-mount-param.yaml"))).toThrow(
+      "volume.mount",
+    );
+  });
+
+  test("throws on invalid cron_schedule after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-cron-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "not-a-cron"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-cron-param.yaml"))).toThrow(
+      "cron_schedule",
+    );
+  });
+
+  test("throws on invalid restart_policy after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-policy-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: SOMETIMES
+      build: NIXPACKS
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-policy-param.yaml"))).toThrow(
+      "restart_policy",
+    );
+  });
 });

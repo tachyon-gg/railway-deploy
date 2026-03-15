@@ -10,7 +10,11 @@ import type {
 import type { ServiceState, State } from "../types/state.js";
 import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
 import { expandParamsDeep, resolveParams } from "./params.js";
-import { validateEnvironmentConfig, validateServiceTemplate } from "./schema.js";
+import {
+  validateEnvironmentConfig,
+  validateResolvedService,
+  validateServiceTemplate,
+} from "./schema.js";
 import { getDeletedVariables, resolveEnvVarString, resolveEnvVars } from "./variables.js";
 
 /**
@@ -324,6 +328,9 @@ function resolveService(
   }
   if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
   if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
+
+  // Validate resolved values (after param expansion)
+  validateResolvedService(name, service);
 
   return { service, deleted };
 }
