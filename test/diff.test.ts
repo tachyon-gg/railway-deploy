@@ -696,7 +696,7 @@ describe("computeChangeset", () => {
     }
   });
 
-  test("removing restartPolicy from config generates null clear", () => {
+  test("removing restartPolicy from config skips diff but warns", () => {
     const desired = makeState({
       services: {
         web: {
@@ -720,11 +720,9 @@ describe("computeChangeset", () => {
     });
 
     const changeset = computeChangeset(desired, current, {}, [], {});
+    // Non-nullable field — no change generated, Railway keeps current value
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.restartPolicy).toBeNull();
-    }
+    expect(update).toBeUndefined();
   });
 
   test("removing source from config generates null clear", () => {
@@ -1198,7 +1196,7 @@ describe("computeChangeset", () => {
     }
   });
 
-  test("removing builder/watchPatterns/etc from config generates null clear", () => {
+  test("removing nullable fields clears them, non-nullable fields are skipped with warning", () => {
     const desired = makeState({
       services: {
         web: {
@@ -1229,8 +1227,10 @@ describe("computeChangeset", () => {
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
-      expect(update.settings.builder).toBeNull();
-      expect(update.settings.watchPatterns).toBeNull();
+      // Non-nullable fields (builder, watchPatterns) should NOT be in settings
+      expect(update.settings.builder).toBeUndefined();
+      expect(update.settings.watchPatterns).toBeUndefined();
+      // Nullable fields should be cleared
       expect(update.settings.drainingSeconds).toBeNull();
       expect(update.settings.overlapSeconds).toBeNull();
       expect(update.settings.ipv6EgressEnabled).toBeNull();
