@@ -112,11 +112,16 @@ query GetProject($id: String!) {
 }
 
 query GetVariables($projectId: String!, $environmentId: String!, $serviceId: String!) {
-  variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+  variables(
+    projectId: $projectId
+    environmentId: $environmentId
+    serviceId: $serviceId
+    unrendered: true
+  )
 }
 
 query GetSharedVariables($projectId: String!, $environmentId: String!) {
-  variables(projectId: $projectId, environmentId: $environmentId)
+  variables(projectId: $projectId, environmentId: $environmentId, unrendered: true)
 }
 
 query GetTcpProxies($serviceId: String!, $environmentId: String!) {
