@@ -140,7 +140,7 @@
     "builder": {
       "type": "string",
       "description": "Builder to use for deployments.",
-      "enum": ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"]
+      "enum": ["RAILPACK", "NIXPACKS", "HEROKU", "PAKETO"]
     },
     "watch_patterns": {
       "type": "array",

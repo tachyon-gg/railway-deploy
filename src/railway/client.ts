@@ -11,7 +11,7 @@ export function createClient(token: string): GraphQLClient {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(120_000),
   });
 
   // Wrap the request method with retry logic
