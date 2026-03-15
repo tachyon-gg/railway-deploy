@@ -2033,4 +2033,67 @@ describe("computeChangeset", () => {
     const enable = changeset.changes.find((c) => c.type === "enable-static-ips");
     expect(enable).toBeDefined();
   });
+
+  test("detects restartPolicyMaxRetries change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          restartPolicyMaxRetries: 5,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          restartPolicyMaxRetries: 10,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.restartPolicyMaxRetries).toBe(5);
+    }
+  });
+
+  test("detects railwayConfigFile change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          railwayConfigFile: "railway.toml",
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-settings") {
+      expect(update.settings.railwayConfigFile).toBe("railway.toml");
+    }
+  });
 });

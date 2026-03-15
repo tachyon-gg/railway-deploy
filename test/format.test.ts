@@ -347,7 +347,11 @@ describe("printChangeset", () => {
         },
       ],
     };
-    printChangeset(changeset, { noColor: true, verbose: true, currentState: { services: {}, sharedVariables: {} } });
+    printChangeset(changeset, {
+      noColor: true,
+      verbose: true,
+      currentState: { services: {}, sharedVariables: {} },
+    });
     const output = allOutput();
     expect(output).toContain("registryCredentials: ***");
     expect(output).not.toContain("secret");
