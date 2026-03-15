@@ -60,7 +60,7 @@ environment: production      # Railway environment name
 
 shared_variables:            # Variables shared across all services
   APP_ENV: production
-  DATABASE_URL: ${{Postgres.DATABASE_URL}}
+  API_PORT: "8080"
 
 services:                    # Map of service name -> config
   web: { ... }
@@ -211,6 +211,8 @@ variables:
 | `%{param}` | At config load time | Template parameter substitution |
 | `%{service_name}` | At config load time | Built-in: the service's config key |
 | `null` | N/A | Marks a variable for deletion |
+
+**Important:** Shared variables (`shared_variables`) cannot contain `${{service.VAR}}` references — Railway resolves shared variables without a service context, so cross-service references will resolve to empty strings. Use `${{service.VAR}}` references directly in service variables instead, and use shared variables only for plain values or `${{shared.OTHER_VAR}}` self-references.
 
 `%{param}` is expanded first, so it can be used inside `${{}}` Railway references. This is useful for templates that need to reference their own or other services' variables:
 
