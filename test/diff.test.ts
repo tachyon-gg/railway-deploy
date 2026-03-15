@@ -2258,4 +2258,25 @@ describe("computeChangeset", () => {
       expect(flagChange.serviceName).toBe("web");
     }
   });
+
+  test("new service with metal: false does not generate feature flag change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: false,
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const flagChanges = changeset.changes.filter(
+      (c) => c.type === "enable-service-feature-flag" || c.type === "disable-service-feature-flag",
+    );
+    expect(flagChanges).toHaveLength(0);
+  });
 });
