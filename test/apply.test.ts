@@ -289,6 +289,30 @@ describe("applyChangeset", () => {
     expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
   });
 
+  test("skipDeploys is per-service — different services don't skip each other", async () => {
+    const captured: MockCall[] = [];
+    const testClient = {
+      request: async (document: unknown, variables?: Record<string, unknown>) => {
+        captured.push({ document, variables: variables as MockCall["variables"] });
+        return {};
+      },
+    } as GraphQLClient;
+
+    const changes: Change[] = [
+      { type: "upsert-variables", serviceName: "a", serviceId: "svc-a", variables: { X: "1" } },
+      { type: "upsert-variables", serviceName: "b", serviceId: "svc-b", variables: { Y: "2" } },
+    ];
+
+    const result = await applyChangeset(testClient, makeChangeset(changes), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(2);
+    // Each is the only var change for its service — neither should skip
+    expect(inputOf(captured[0]).skipDeploys).toBeFalsy();
+    expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
+  });
+
   test("delete-bucket throws 'not supported' error", async () => {
     const { client } = mockClient();
     const change: Change = {

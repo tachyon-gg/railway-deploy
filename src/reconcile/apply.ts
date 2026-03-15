@@ -51,7 +51,21 @@ function willTriggerDeploy(change: Change, skipDeploys: boolean): boolean {
     case "upsert-variables":
     case "upsert-shared-variables":
       return !skipDeploys;
-    default:
+    case "delete-service":
+    case "create-domain":
+    case "delete-domain":
+    case "create-volume":
+    case "delete-volume":
+    case "update-deployment-trigger":
+    case "create-service-domain":
+    case "delete-service-domain":
+    case "create-tcp-proxy":
+    case "delete-tcp-proxy":
+    case "update-service-limits":
+    case "enable-static-ips":
+    case "disable-static-ips":
+    case "create-bucket":
+    case "delete-bucket":
       return false;
   }
 }
