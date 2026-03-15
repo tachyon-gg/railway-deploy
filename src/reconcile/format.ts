@@ -326,7 +326,10 @@ export function printChangeset(
 
   // Print per-service changes
   for (const [serviceName, entries] of serviceGroups) {
-    console.log(`  ${yellow("~", noColor)} ${serviceName}:`);
+    const actions = new Set(entries.map((e) => e.desc.action));
+    const headerAction: Action = actions.size === 1 ? [...actions][0] : "update";
+    const headerIcon = ACTION_ICON[headerAction](noColor);
+    console.log(`  ${headerIcon} ${serviceName}:`);
     for (const { change, desc } of entries) {
       const icon = ACTION_ICON[desc.action](noColor);
 
@@ -343,13 +346,12 @@ export function printChangeset(
           console.log(`    ${icon} ${key}: ${oldStr} → ${newStr}`);
         }
       } else if (verbose && change.type === "upsert-variables") {
-        console.log(`    ${icon} variables:`);
         for (const [key, value] of Object.entries(change.variables)) {
           const currentSvc = options?.currentState?.services[change.serviceName];
           const oldVal = currentSvc?.variables[key];
           const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
           console.log(
-            `        ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
+            `    ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
           );
         }
       } else {
