@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { loadEnvironmentConfig } from "../../src/config/loader.js";
+import { loadProjectConfig } from "../../src/config/loader.js";
 import { createService } from "../../src/railway/mutations.js";
 import { fetchCurrentState } from "../../src/railway/queries.js";
 import { applyChangeset } from "../../src/reconcile/apply.js";
@@ -44,7 +44,8 @@ describe("Railway Integration — service settings", () => {
       writeFileSync(
         join(ENVS_DIR, "settings.yaml"),
         `project: ${PROJECT_NAME}
-environment: ${ENV_NAME}
+environments:
+  - ${ENV_NAME}
 services:
   web:
     source:
@@ -57,7 +58,7 @@ services:
         state: desired,
         deletedVars,
         deletedSharedVars,
-      } = loadEnvironmentConfig(join(ENVS_DIR, "settings.yaml"));
+      } = loadProjectConfig(join(ENVS_DIR, "settings.yaml"), ENV_NAME);
       desired.projectId = PROJECT_ID;
       desired.environmentId = ENV_ID;
 
@@ -66,14 +67,10 @@ services:
         domainMap,
         volumeMap,
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-      const changeset = computeChangeset(
-        desired,
-        current,
-        deletedVars,
-        deletedSharedVars,
+      const changeset = computeChangeset(desired, current, deletedVars, deletedSharedVars, {
         domainMap,
         volumeMap,
-      );
+      });
       expect(changeset.changes.length).toBeGreaterThan(0);
 
       const result = await applyChangeset(client, changeset, PROJECT_ID, ENV_ID);
@@ -86,14 +83,10 @@ services:
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
       expect(after.services.web.startCommand).toBe("nginx -g 'daemon off;'");
 
-      const secondDiff = computeChangeset(
-        desired,
-        after,
-        deletedVars,
-        deletedSharedVars,
-        afterDomains,
-        afterVolumes,
-      );
+      const secondDiff = computeChangeset(desired, after, deletedVars, deletedSharedVars, {
+        domainMap: afterDomains,
+        volumeMap: afterVolumes,
+      });
       expect(secondDiff.changes).toEqual([]);
     },
     30000,
@@ -105,7 +98,8 @@ services:
       writeFileSync(
         join(ENVS_DIR, "settings.yaml"),
         `project: ${PROJECT_NAME}
-environment: ${ENV_NAME}
+environments:
+  - ${ENV_NAME}
 services:
   web:
     source:
@@ -118,7 +112,7 @@ services:
         state: desired,
         deletedVars,
         deletedSharedVars,
-      } = loadEnvironmentConfig(join(ENVS_DIR, "settings.yaml"));
+      } = loadProjectConfig(join(ENVS_DIR, "settings.yaml"), ENV_NAME);
       desired.projectId = PROJECT_ID;
       desired.environmentId = ENV_ID;
 
@@ -127,14 +121,10 @@ services:
         domainMap,
         volumeMap,
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-      const changeset = computeChangeset(
-        desired,
-        current,
-        deletedVars,
-        deletedSharedVars,
+      const changeset = computeChangeset(desired, current, deletedVars, deletedSharedVars, {
         domainMap,
         volumeMap,
-      );
+      });
       expect(changeset.changes.length).toBeGreaterThan(0);
 
       const result = await applyChangeset(client, changeset, PROJECT_ID, ENV_ID);
@@ -147,14 +137,10 @@ services:
       } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
       expect(after.services.web.source?.image).toBe("nginx:stable");
 
-      const secondDiff = computeChangeset(
-        desired,
-        after,
-        deletedVars,
-        deletedSharedVars,
-        afterDomains,
-        afterVolumes,
-      );
+      const secondDiff = computeChangeset(desired, after, deletedVars, deletedSharedVars, {
+        domainMap: afterDomains,
+        volumeMap: afterVolumes,
+      });
       expect(secondDiff.changes).toEqual([]);
     },
     30000,
@@ -189,7 +175,7 @@ describe("Railway Integration — variables edge cases", () => {
         },
       };
 
-      const changeset = computeChangeset(desired, current, {}, [], domainMap, volumeMap);
+      const changeset = computeChangeset(desired, current, {}, [], { domainMap, volumeMap });
 
       const delVars = changeset.changes.filter((c) => c.type === "delete-variables");
       for (const dv of delVars) {

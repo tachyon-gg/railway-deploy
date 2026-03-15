@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { loadEnvironmentConfig } from "../../src/config/loader.js";
+import { loadProjectConfig } from "../../src/config/loader.js";
 import { fetchCurrentState } from "../../src/railway/queries.js";
-import { applyChangeset, printChangeset } from "../../src/reconcile/apply.js";
+import { applyChangeset } from "../../src/reconcile/apply.js";
 import { computeChangeset } from "../../src/reconcile/diff.js";
+import { printChangeset } from "../../src/reconcile/format.js";
 import {
   cleanProject,
   client,
@@ -43,7 +44,8 @@ describe("Railway Integration — full reconciliation", () => {
       writeFileSync(
         join(ENVS_DIR, "test.yaml"),
         `project: ${PROJECT_NAME}
-environment: ${ENV_NAME}
+environments:
+  - ${ENV_NAME}
 
 shared_variables:
   APP_ENVIRONMENT: test
@@ -67,7 +69,7 @@ services:
         state: desiredState,
         deletedVars,
         deletedSharedVars,
-      } = loadEnvironmentConfig(join(ENVS_DIR, "test.yaml"));
+      } = loadProjectConfig(join(ENVS_DIR, "test.yaml"), ENV_NAME);
       desiredState.projectId = PROJECT_ID;
       desiredState.environmentId = ENV_ID;
 
@@ -82,8 +84,7 @@ services:
         currentState,
         deletedVars,
         deletedSharedVars,
-        domainMap,
-        volumeMap,
+        { domainMap, volumeMap },
       );
 
       expect(changeset.changes.length).toBeGreaterThan(0);
@@ -104,8 +105,7 @@ services:
         afterState,
         deletedVars,
         deletedSharedVars,
-        afterDomains,
-        afterVolumes,
+        { domainMap: afterDomains, volumeMap: afterVolumes },
       );
       printChangeset(secondDiff);
       expect(secondDiff.changes).toEqual([]);
@@ -119,7 +119,8 @@ services:
       writeFileSync(
         join(ENVS_DIR, "test.yaml"),
         `project: ${PROJECT_NAME}
-environment: ${ENV_NAME}
+environments:
+  - ${ENV_NAME}
 
 shared_variables:
   APP_ENVIRONMENT: test-v2
@@ -145,7 +146,7 @@ services:
         state: desiredState,
         deletedVars,
         deletedSharedVars,
-      } = loadEnvironmentConfig(join(ENVS_DIR, "test.yaml"));
+      } = loadProjectConfig(join(ENVS_DIR, "test.yaml"), ENV_NAME);
       desiredState.projectId = PROJECT_ID;
       desiredState.environmentId = ENV_ID;
 
@@ -160,8 +161,7 @@ services:
         currentState,
         deletedVars,
         deletedSharedVars,
-        domainMap,
-        volumeMap,
+        { domainMap, volumeMap },
       );
 
       expect(changeset.changes.length).toBeGreaterThan(0);
@@ -180,8 +180,7 @@ services:
         afterState,
         deletedVars,
         deletedSharedVars,
-        afterDomains,
-        afterVolumes,
+        { domainMap: afterDomains, volumeMap: afterVolumes },
       );
       expect(secondDiff.changes).toEqual([]);
     },
@@ -194,7 +193,8 @@ services:
       writeFileSync(
         join(ENVS_DIR, "test.yaml"),
         `project: ${PROJECT_NAME}
-environment: ${ENV_NAME}
+environments:
+  - ${ENV_NAME}
 
 shared_variables:
   APP_ENVIRONMENT: test-v2
@@ -213,7 +213,7 @@ services:
         state: desiredState,
         deletedVars,
         deletedSharedVars,
-      } = loadEnvironmentConfig(join(ENVS_DIR, "test.yaml"));
+      } = loadProjectConfig(join(ENVS_DIR, "test.yaml"), ENV_NAME);
       desiredState.projectId = PROJECT_ID;
       desiredState.environmentId = ENV_ID;
 
@@ -228,8 +228,7 @@ services:
         currentState,
         deletedVars,
         deletedSharedVars,
-        domainMap,
-        volumeMap,
+        { domainMap, volumeMap },
       );
 
       const deletes = changeset.changes.filter((c) => c.type === "delete-service");

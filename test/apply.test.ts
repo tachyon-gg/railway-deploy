@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { GraphQLClient } from "graphql-request";
+import { logger } from "../src/logger.js";
 import { applyChangeset } from "../src/reconcile/apply.js";
 import type { Change, Changeset } from "../src/types/changeset.js";
 
@@ -46,14 +47,12 @@ const PROJECT_ID = "proj-test";
 const ENV_ID = "env-test";
 
 describe("applyChangeset", () => {
-  let consoleSpy: ReturnType<typeof spyOn>;
-
   beforeEach(() => {
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    logger.mockTypes(() => () => {});
   });
 
   afterEach(() => {
-    consoleSpy.mockRestore();
+    logger.restoreAll();
   });
 
   test("empty changeset produces empty results", async () => {
@@ -1050,73 +1049,26 @@ describe("applyChangeset", () => {
     expect(result.failed[0].error).toContain("No service ID");
     expect(result.failed[0].error).toContain("orphan-service");
   });
+});
 
-  test("enable-service-feature-flag calls mutation", async () => {
-    const { client, calls } = mockClient();
-    const change: Change = {
-      type: "enable-service-feature-flag",
-      serviceName: "web",
-      serviceId: "svc-1",
-      flag: "USE_VM_RUNTIME",
-    };
+describe("createEnvironment", () => {
+  test("sends EnvironmentCreateDocument with correct input", async () => {
+    const { createEnvironment } = await import("../src/railway/mutations.js");
+    const { EnvironmentCreateDocument } = await import("../src/generated/graphql.js");
 
-    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
-      noColor: true,
-    });
+    const calls: Array<{ document: unknown; variables: unknown }> = [];
+    const client = {
+      request: async (document: unknown, variables: unknown) => {
+        calls.push({ document, variables });
+        return { environmentCreate: { id: "env-123", name: "gamma" } };
+      },
+    } as GraphQLClient;
 
-    expect(result.applied).toHaveLength(1);
-    expect(result.failed).toHaveLength(0);
+    const result = await createEnvironment(client, "proj-1", "gamma");
+
+    expect(result).toEqual({ id: "env-123", name: "gamma" });
     expect(calls).toHaveLength(1);
-  });
-
-  test("disable-service-feature-flag calls mutation", async () => {
-    const { client, calls } = mockClient();
-    const change: Change = {
-      type: "disable-service-feature-flag",
-      serviceName: "web",
-      serviceId: "svc-1",
-      flag: "USE_VM_RUNTIME",
-    };
-
-    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
-      noColor: true,
-    });
-
-    expect(result.applied).toHaveLength(1);
-    expect(result.failed).toHaveLength(0);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("enable-service-feature-flag without serviceId throws", async () => {
-    const { client } = mockClient();
-    const change: Change = {
-      type: "enable-service-feature-flag",
-      serviceName: "ghost",
-      serviceId: "",
-      flag: "USE_VM_RUNTIME",
-    };
-
-    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
-      noColor: true,
-    });
-
-    expect(result.applied).toHaveLength(0);
-    expect(result.failed).toHaveLength(1);
-    expect(result.failed[0].error).toContain("No service ID");
-  });
-
-  test("disable-service-feature-flag without serviceId throws", async () => {
-    const { client } = mockClient();
-    const change: Change = {
-      type: "disable-service-feature-flag",
-      serviceName: "ghost",
-      serviceId: "",
-      flag: "USE_VM_RUNTIME",
-    };
-    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
-      noColor: true,
-    });
-    expect(result.failed).toHaveLength(1);
-    expect(result.failed[0].error).toContain("No service ID");
+    expect(calls[0].document).toBe(EnvironmentCreateDocument);
+    expect(calls[0].variables).toEqual({ input: { projectId: "proj-1", name: "gamma" } });
   });
 });

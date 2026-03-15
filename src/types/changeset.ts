@@ -97,6 +97,33 @@ export interface CreateVolume {
   name: string;
 }
 
+export interface UpdateVolume {
+  type: "update-volume";
+  serviceName: string;
+  serviceId: string;
+  volumeId: string;
+  name?: string;
+  mount?: string;
+}
+
+export interface UpdateDomain {
+  type: "update-domain";
+  serviceName: string;
+  serviceId?: string;
+  domain: string;
+  domainId: string;
+  targetPort?: number;
+}
+
+export interface UpdateServiceDomain {
+  type: "update-service-domain";
+  serviceName: string;
+  serviceId?: string;
+  domainId: string;
+  domain: string;
+  targetPort?: number;
+}
+
 export interface DeleteVolume {
   type: "delete-volume";
   serviceName: string;
@@ -160,20 +187,6 @@ export interface DisableStaticIps {
   serviceId: string;
 }
 
-export interface EnableServiceFeatureFlag {
-  type: "enable-service-feature-flag";
-  serviceName: string;
-  serviceId: string;
-  flag: string;
-}
-
-export interface DisableServiceFeatureFlag {
-  type: "disable-service-feature-flag";
-  serviceName: string;
-  serviceId: string;
-  flag: string;
-}
-
 export interface CreateBucket {
   type: "create-bucket";
   name: string;
@@ -195,19 +208,20 @@ export type Change =
   | DeleteSharedVariables
   | CreateDomain
   | DeleteDomain
+  | UpdateDomain
   | UpdateServiceSettings
   | CreateVolume
+  | UpdateVolume
   | DeleteVolume
   | UpdateDeploymentTrigger
   | CreateServiceDomain
   | DeleteServiceDomain
+  | UpdateServiceDomain
   | CreateTcpProxy
   | DeleteTcpProxy
   | UpdateServiceLimits
   | EnableStaticIps
   | DisableStaticIps
-  | EnableServiceFeatureFlag
-  | DisableServiceFeatureFlag
   | CreateBucket
   | DeleteBucket;
 

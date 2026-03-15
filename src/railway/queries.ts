@@ -9,6 +9,7 @@ import {
   GetVariablesDocument,
   ListProjectsDocument,
 } from "../generated/graphql.js";
+import { logger } from "../logger.js";
 import type { BucketState, ServiceState, State } from "../types/state.js";
 import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
 
@@ -31,20 +32,33 @@ export async function resolveProjectId(
 
 /**
  * Resolve an environment name to its ID within a project.
+ * If `autoCreate` is true and the environment doesn't exist, it will be created.
+ * Otherwise, throws an error.
  */
 export async function resolveEnvironmentId(
   client: GraphQLClient,
   projectId: string,
   environmentName: string,
+  autoCreate?: boolean,
 ): Promise<string> {
   const data = await client.request(GetProjectDocument, { id: projectId });
 
   const env = data.project.environments.edges.find((e) => e.node.name === environmentName);
-  if (!env) {
-    const available = data.project.environments.edges.map((e) => e.node.name).join(", ");
-    throw new Error(`Environment "${environmentName}" not found. Available: ${available}`);
+  if (env) {
+    return env.node.id;
   }
-  return env.node.id;
+
+  if (!autoCreate) {
+    const available = data.project.environments.edges.map((e) => e.node.name).join(", ");
+    throw new Error(
+      `Environment "${environmentName}" not found. Available: ${available}\n  Use --apply to create it automatically.`,
+    );
+  }
+
+  logger.info(`Environment "${environmentName}" not found — creating...`);
+  const { createEnvironment } = await import("./mutations.js");
+  const created = await createEnvironment(client, projectId, environmentName);
+  return created.id;
 }
 
 type ServiceNode = GetProjectQuery["project"]["services"]["edges"][number]["node"];
@@ -174,7 +188,7 @@ export async function fetchCurrentState(
       );
     } else if (result.status === "rejected") {
       const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      console.warn(`  Warning: Failed to fetch TCP proxies for a service: ${reason}`);
+      logger.warn(`Failed to fetch TCP proxies for a service: ${reason}`);
     }
   }
 
@@ -197,7 +211,7 @@ export async function fetchCurrentState(
       }
     } else if (result.status === "rejected") {
       const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      console.warn(`  Warning: Failed to fetch resource limits for a service: ${reason}`);
+      logger.warn(`Failed to fetch resource limits for a service: ${reason}`);
     }
   }
 
@@ -218,7 +232,7 @@ export async function fetchCurrentState(
       egressLookup.set(result.value.serviceId, true);
     } else if (result.status === "rejected") {
       const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      console.warn(`  Warning: Failed to fetch egress gateways for a service: ${reason}`);
+      logger.warn(`Failed to fetch egress gateways for a service: ${reason}`);
     }
   }
 
@@ -227,9 +241,7 @@ export async function fetchCurrentState(
       (e) => e.node.environmentId === environmentId,
     );
     if (!instanceEdge) {
-      console.warn(
-        `  Warning: Service "${svc.name}" has no instance in this environment — skipping`,
-      );
+      logger.warn(`Service "${svc.name}" has no instance in this environment — skipping`);
       continue;
     }
     const instance = instanceEdge.node;
@@ -284,11 +296,6 @@ export async function fetchCurrentState(
     // Populate static outbound IPs
     if (egressLookup.get(svc.id)) {
       services[svc.name].staticOutboundIps = true;
-    }
-
-    // Populate metal (VM runtime) flag
-    if (svc.featureFlags.includes("USE_VM_RUNTIME")) {
-      services[svc.name].metal = true;
     }
 
     if (vol) {

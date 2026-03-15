@@ -1,6 +1,15 @@
+import { logger } from "../logger.js";
 import type { Change, Changeset, UpdateServiceSettings } from "../types/changeset.js";
 import type { ServiceState, State } from "../types/state.js";
 import { deepEqual } from "../util.js";
+
+/** Lookup maps from fetchCurrentState, needed for diff operations that require Railway IDs. */
+export interface CurrentStateMaps {
+  domainMap: Record<string, Array<{ id: string; domain: string; targetPort?: number }>>;
+  volumeMap?: Record<string, { volumeId: string; mount: string; name: string }>;
+  serviceDomainMap?: Record<string, { id: string; domain: string }>;
+  tcpProxyMap?: Record<string, Array<{ id: string; applicationPort: number }>>;
+}
 
 /** Railway auto-injects these read-only variables into every service. Never diff them. */
 const RAILWAY_MANAGED_PREFIXES = ["RAILWAY_"];
@@ -21,8 +30,7 @@ function isRailwayManaged(key: string): boolean {
  * @param current - The current live state from Railway.
  * @param deletedVars - Per-service variable names explicitly marked for deletion (via `null`).
  * @param deletedSharedVars - Shared variable names explicitly marked for deletion.
- * @param domainMap - Current custom domains per service (from {@link fetchCurrentState}).
- * @param volumeMap - Current volumes per service (from {@link fetchCurrentState}).
+ * @param maps - Lookup maps for current Railway IDs (domains, volumes, service domains, TCP proxies).
  * @returns A {@link Changeset} containing all changes needed to reconcile.
  */
 export function computeChangeset(
@@ -30,11 +38,9 @@ export function computeChangeset(
   current: State,
   deletedVars: Record<string, string[]>,
   deletedSharedVars: string[],
-  domainMap: Record<string, Array<{ id: string; domain: string; targetPort?: number }>>,
-  volumeMap?: Record<string, { volumeId: string; mount: string; name: string }>,
-  serviceDomainMap?: Record<string, { id: string; domain: string }>,
-  tcpProxyMap?: Record<string, Array<{ id: string; applicationPort: number }>>,
+  maps: CurrentStateMaps,
 ): Changeset {
+  const { domainMap, volumeMap, serviceDomainMap, tcpProxyMap } = maps;
   const changes: Change[] = [];
 
   // --- Shared variables ---
@@ -151,19 +157,6 @@ export function computeChangeset(
         });
       }
 
-      // Metal (VM runtime) for new service
-      if (desiredSvc.metal) {
-        console.warn(
-          `  Warning: "${name}" metal flag is service-level — applies across all Railway environments`,
-        );
-        changes.push({
-          type: "enable-service-feature-flag",
-          serviceName: name,
-          serviceId: "", // Resolved at apply time
-          flag: "USE_VM_RUNTIME",
-        });
-      }
-
       if (Object.keys(newSvcSettings).length > 0) {
         changes.push({
           type: "update-service-settings",
@@ -202,17 +195,14 @@ export function computeChangeset(
               : {}),
           });
         } else {
-          console.warn(
-            `  Warning: "${name}" has branch/check_suites in config but no deployment trigger exists — skipping`,
+          logger.warn(
+            `"${name}" has branch/check_suites in config but no deployment trigger exists — skipping`,
           );
         }
       }
 
       // Static outbound IPs diff
       diffStaticOutboundIps(name, desiredSvc, currentSvc, changes);
-
-      // Metal (VM runtime) diff
-      diffMetal(name, desiredSvc, currentSvc, changes);
     }
   }
 
@@ -335,8 +325,8 @@ function diffServiceSettings(
   if (desired.restartPolicy !== undefined && desired.restartPolicy !== current.restartPolicy) {
     settings.restartPolicy = desired.restartPolicy;
   } else if (desired.restartPolicy === undefined && current.restartPolicy !== undefined) {
-    console.warn(
-      `  Warning: "${desired.name}" has no restart_policy in config — Railway will keep "${current.restartPolicy}"`,
+    logger.warn(
+      `"${desired.name}" has no restart_policy in config — Railway will keep "${current.restartPolicy}"`,
     );
   }
   if (!deepEqual(desired.healthcheck, current.healthcheck)) {
@@ -373,8 +363,8 @@ function diffServiceSettings(
     desired.restartPolicyMaxRetries === undefined &&
     current.restartPolicyMaxRetries !== undefined
   ) {
-    console.warn(
-      `  Warning: "${desired.name}" has no restart_policy_max_retries in config — Railway will keep ${current.restartPolicyMaxRetries}`,
+    logger.warn(
+      `"${desired.name}" has no restart_policy_max_retries in config — Railway will keep ${current.restartPolicyMaxRetries}`,
     );
   }
   if (desired.sleepApplication !== current.sleepApplication) {
@@ -385,8 +375,8 @@ function diffServiceSettings(
   if (desired.builder !== undefined && desired.builder !== current.builder) {
     settings.builder = desired.builder;
   } else if (desired.builder === undefined && current.builder !== undefined) {
-    console.warn(
-      `  Warning: "${desired.name}" has no builder in config — Railway will keep "${current.builder}"`,
+    logger.warn(
+      `"${desired.name}" has no builder in config — Railway will keep "${current.builder}"`,
     );
   }
   // watchPatterns is non-nullable on Railway — can't clear it
@@ -396,8 +386,8 @@ function diffServiceSettings(
   ) {
     settings.watchPatterns = desired.watchPatterns;
   } else if (desired.watchPatterns === undefined && current.watchPatterns !== undefined) {
-    console.warn(
-      `  Warning: "${desired.name}" has no watch_patterns in config — Railway will keep current patterns`,
+    logger.warn(
+      `"${desired.name}" has no watch_patterns in config — Railway will keep current patterns`,
     );
   }
   if (desired.drainingSeconds !== current.drainingSeconds) {
@@ -410,7 +400,8 @@ function diffServiceSettings(
     settings.ipv6EgressEnabled = desired.ipv6EgressEnabled ?? null;
   }
   if (desired.railwayConfigFile !== current.railwayConfigFile) {
-    settings.railwayConfigFile = desired.railwayConfigFile ?? null;
+    // Railway ignores null for this field — use empty string to clear
+    settings.railwayConfigFile = desired.railwayConfigFile ?? "";
   }
   // Registry credentials can't be diffed (Railway doesn't return them).
   // Always include if specified — user needs to see they're being sent.
@@ -454,20 +445,14 @@ function diffDomains(
       desiredDomain.targetPort !== undefined &&
       desiredDomain.targetPort !== existing.targetPort
     ) {
-      // targetPort changed — Railway doesn't support in-place update, so delete + create
+      // targetPort changed — update in place
       changes.push({
-        type: "delete-domain",
+        type: "update-domain",
         serviceName,
         serviceId: current.id,
         domain: domainName,
         domainId: existing.id,
-      });
-      changes.push({
-        type: "create-domain",
-        serviceName,
-        serviceId: current.id,
-        domain: domainName,
-        ...(desiredDomain.targetPort !== undefined ? { targetPort: desiredDomain.targetPort } : {}),
+        targetPort: desiredDomain.targetPort,
       });
     }
   }
@@ -503,24 +488,27 @@ function diffVolume(
     });
   }
 
-  // Volume update: both exist but differ (Railway doesn't support in-place update, so delete + create)
+  // Volume update: update name and/or mount path in place (no data loss)
   if (desired.volume && currentVolume && current.id) {
-    if (
-      desired.volume.mount !== currentVolume.mount ||
-      desired.volume.name !== currentVolume.name
-    ) {
+    const nameChanged = desired.volume.name !== currentVolume.name;
+    const mountChanged = desired.volume.mount !== currentVolume.mount;
+
+    if (nameChanged) {
       changes.push({
-        type: "delete-volume",
+        type: "update-volume",
         serviceName,
         serviceId: current.id,
         volumeId: currentVolume.volumeId,
+        name: desired.volume.name,
       });
+    }
+    if (mountChanged) {
       changes.push({
-        type: "create-volume",
+        type: "update-volume",
         serviceName,
         serviceId: current.id,
+        volumeId: currentVolume.volumeId,
         mount: desired.volume.mount,
-        name: desired.volume.name,
       });
     }
   }
@@ -582,19 +570,15 @@ function diffServiceDomain(
       domainId: currentServiceDomain.id,
     });
   } else if (desired.railwayDomain && currentServiceDomain) {
-    // Both exist — check if targetPort changed (requires delete + create)
+    // Both exist — check if targetPort changed
     const currentTargetPort = current.railwayDomain?.targetPort;
     if (desired.railwayDomain.targetPort !== currentTargetPort) {
       changes.push({
-        type: "delete-service-domain",
+        type: "update-service-domain",
         serviceName,
         serviceId: current.id,
         domainId: currentServiceDomain.id,
-      });
-      changes.push({
-        type: "create-service-domain",
-        serviceName,
-        serviceId: current.id,
+        domain: currentServiceDomain.domain,
         targetPort: desired.railwayDomain.targetPort,
       });
     }
@@ -663,37 +647,6 @@ function diffServiceLimits(
       serviceName,
       serviceId: current.id,
       limits,
-    });
-  }
-}
-
-function diffMetal(
-  serviceName: string,
-  desired: ServiceState,
-  current: ServiceState,
-  changes: Change[],
-): void {
-  if (!current.id) return;
-
-  if (desired.metal === true && !current.metal) {
-    console.warn(
-      `  Warning: "${serviceName}" metal flag is service-level — applies across all Railway environments`,
-    );
-    changes.push({
-      type: "enable-service-feature-flag",
-      serviceName,
-      serviceId: current.id,
-      flag: "USE_VM_RUNTIME",
-    });
-  } else if (desired.metal === false && current.metal) {
-    console.warn(
-      `  Warning: "${serviceName}" metal flag is service-level — applies across all Railway environments`,
-    );
-    changes.push({
-      type: "disable-service-feature-flag",
-      serviceName,
-      serviceId: current.id,
-      flag: "USE_VM_RUNTIME",
     });
   }
 }

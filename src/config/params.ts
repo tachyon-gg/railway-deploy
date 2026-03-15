@@ -1,3 +1,4 @@
+import { logger } from "../logger.js";
 import type { ParamDef } from "../types/config.js";
 
 /**
@@ -23,7 +24,7 @@ export function resolveParams(
   // Warn about extra params not in the template
   for (const name of Object.keys(values)) {
     if (!(name in defs)) {
-      console.warn(`Warning: unknown parameter "${name}" (not in template)`);
+      logger.warn(`Unknown parameter "${name}" (not in template)`);
     }
   }
 

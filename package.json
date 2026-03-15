@@ -1,6 +1,6 @@
 {
   "name": "@tachyon-gg/railway-deploy",
-  "version": "0.2.10",
+  "version": "0.3.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
     "postbuild": "printf '#!/usr/bin/env node\\n' | cat - dist/index.js > dist/tmp && mv dist/tmp dist/index.js",
     "prepublishOnly": "bun run build && bun run test && bun run typecheck",
     "typecheck": "tsc --noEmit",
-    "codegen": "graphql-codegen --config codegen.ts",
+    "codegen": "graphql-codegen --config codegen.ts && bun run scripts/generate-schemas.ts && biome format --write schemas/",
     "test": "bun test --bail --test-name-pattern '^(?!Railway Integration)' test/",
     "test:coverage": "bun test --bail --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage test/*.test.ts",
     "test:integration": "bun test --bail --timeout 30000 --env-file .env.test test/integration/",
@@ -35,6 +35,7 @@
   "dependencies": {
     "@graphql-typed-document-node/core": "^3.2.0",
     "commander": "^14.0.3",
+    "consola": "^3.4.2",
     "dotenv": "^17.3.1",
     "fast-deep-equal": "^3.1.3",
     "graphql": "^16.10.0",

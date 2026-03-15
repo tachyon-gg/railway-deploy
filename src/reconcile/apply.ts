@@ -1,7 +1,7 @@
 import type { GraphQLClient } from "graphql-request";
-import type { ActiveServiceFeatureFlag, ServiceInstanceUpdateInput } from "../generated/graphql.js";
+import type { ServiceInstanceUpdateInput } from "../generated/graphql.js";
+import { logger } from "../logger.js";
 import {
-  addServiceFeatureFlag,
   clearEgressGateways,
   createBucket,
   createCustomDomain,
@@ -17,27 +17,22 @@ import {
   deleteTcpProxy,
   deleteVariable,
   deleteVolume,
-  removeServiceFeatureFlag,
+  updateCustomDomain,
   updateDeploymentTrigger,
+  updateServiceDomain,
   updateServiceInstance,
   updateServiceInstanceLimits,
+  updateVolume,
+  updateVolumeInstance,
   upsertSharedVariables,
   upsertVariables,
 } from "../railway/mutations.js";
 import type { Change, Changeset } from "../types/changeset.js";
 import { changeLabel } from "./format.js";
 
-// Re-export for backwards compatibility
-export { printApplyResult, printChangeset } from "./format.js";
-
 interface ApplyResult {
   applied: Change[];
   failed: Array<{ change: Change; error: string }>;
-}
-
-interface ApplyOptions {
-  verbose?: boolean;
-  noColor?: boolean;
 }
 
 /** Extract a clean error message from GraphQL or network errors */
@@ -65,14 +60,6 @@ function extractErrorMessage(err: unknown): string {
   return msg;
 }
 
-// ANSI color helpers (used in apply output)
-function green(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[32m${text}\x1b[0m`;
-}
-function red(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[31m${text}\x1b[0m`;
-}
-
 /**
  * Execute a changeset against Railway, applying each change sequentially
  * and tracking successes and failures.
@@ -86,7 +73,6 @@ function red(text: string, noColor: boolean): string {
  * @param changeset - The changes to apply (from {@link computeChangeset}).
  * @param projectId - Railway project ID.
  * @param environmentId - Railway environment ID.
- * @param options - Optional flags for verbose output and color control.
  * @returns Lists of successfully applied changes and failures with error messages.
  */
 export async function applyChangeset(
@@ -94,11 +80,9 @@ export async function applyChangeset(
   changeset: Changeset,
   projectId: string,
   environmentId: string,
-  options?: ApplyOptions,
 ): Promise<ApplyResult> {
   const applied: Change[] = [];
   const failed: Array<{ change: Change; error: string }> = [];
-  const noColor = options?.noColor ?? false;
 
   // Track newly created service IDs so subsequent changes can reference them
   const createdServiceIds = new Map<string, string>();
@@ -123,11 +107,11 @@ export async function applyChangeset(
     try {
       await applyChange(client, change, projectId, environmentId, createdServiceIds, skipDeploys);
       applied.push(change);
-      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}`);
+      logger.success(changeLabel(change));
     } catch (err) {
       const message = extractErrorMessage(err);
       failed.push({ change, error: message });
-      console.log(`  ${red("✗", noColor)} ${changeLabel(change)} — ${message}`);
+      logger.fail(`${changeLabel(change)} — ${message}`);
     }
   }
 
@@ -232,6 +216,10 @@ async function applyChange(
       await deleteCustomDomain(client, change.domainId);
       break;
 
+    case "update-domain":
+      await updateCustomDomain(client, change.domainId, environmentId, change.targetPort);
+      break;
+
     case "update-service-settings": {
       const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
       if (!serviceId) {
@@ -312,6 +300,16 @@ async function applyChange(
       await deleteVolume(client, change.volumeId);
       break;
 
+    case "update-volume": {
+      if (change.name) {
+        await updateVolume(client, change.volumeId, change.name);
+      }
+      if (change.mount) {
+        await updateVolumeInstance(client, change.volumeId, environmentId, change.mount);
+      }
+      break;
+    }
+
     case "create-bucket":
       await createBucket(client, projectId, change.bucketName);
       break;
@@ -336,6 +334,21 @@ async function applyChange(
     case "delete-service-domain":
       await deleteServiceDomain(client, change.domainId);
       break;
+
+    case "update-service-domain": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await updateServiceDomain(client, {
+        serviceDomainId: change.domainId,
+        serviceId,
+        environmentId,
+        domain: change.domain,
+        targetPort: change.targetPort,
+      });
+      break;
+    }
 
     case "create-tcp-proxy": {
       const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
@@ -374,24 +387,6 @@ async function applyChange(
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
       await clearEgressGateways(client, serviceId, environmentId);
-      break;
-    }
-
-    case "enable-service-feature-flag": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await addServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
-      break;
-    }
-
-    case "disable-service-feature-flag": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await removeServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
       break;
     }
 

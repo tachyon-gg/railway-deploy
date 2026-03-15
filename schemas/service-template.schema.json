@@ -1,179 +1,206 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Railway Deploy Service Template",
-  "description": "Service template defining reusable service configuration. Templates support %{param} placeholders that are resolved when referenced from an environment config.",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
-    "params": {
-      "type": "object",
-      "description": "Parameter definitions. Each param can be required or have a default value. Referenced in other fields as %{param_name}.",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "required": {
-            "type": "boolean",
-            "description": "Whether this parameter must be provided by the environment config."
-          },
-          "default": {
-            "type": "string",
-            "description": "Default value if not provided by the environment config."
-          }
-        }
-      }
-    },
     "source": {
+      "description": "Service source — specify either 'image' or 'repo', not both.",
       "type": "object",
-      "description": "Service source — specify either 'image' or 'repo', not both. Supports %{param} placeholders.",
-      "additionalProperties": false,
       "properties": {
         "image": {
-          "type": "string",
-          "description": "Container image (e.g., 'ghcr.io/org/app:%{tag}'). Supports %{param} placeholders."
+          "description": "Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1').",
+          "type": "string"
         },
         "repo": {
-          "type": "string",
-          "description": "GitHub repository URL."
+          "description": "GitHub repository URL.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "variables": {
+      "description": "Service-level variables. Set to null to delete. Supports ${ENV_VAR} and ${{service.VAR}} syntax.",
       "type": "object",
-      "description": "Default service variables. Supports %{param}, ${ENV_VAR}, and ${{service.VAR}} syntax. Set to null to mark for deletion.",
+      "propertyNames": {
+        "type": "string"
+      },
       "additionalProperties": {
-        "oneOf": [{ "type": "string" }, { "type": "null" }]
-      }
-    },
-    "domains": {
-      "type": "array",
-      "description": "Custom domains for this service. Each item can be a string or an object with domain and target_port.",
-      "items": {
-        "oneOf": [
-          { "type": "string" },
+        "anyOf": [
           {
-            "type": "object",
-            "required": ["domain"],
-            "additionalProperties": false,
-            "properties": {
-              "domain": { "type": "string" },
-              "target_port": { "type": "integer", "minimum": 1 }
-            }
+            "type": "string"
+          },
+          {
+            "type": "null"
           }
         ]
       }
     },
-    "region": {
-      "type": "object",
-      "description": "Deployment region.",
-      "required": ["region"],
-      "additionalProperties": false,
-      "properties": {
-        "region": { "type": "string", "minLength": 1 },
-        "num_replicas": { "type": "integer", "minimum": 1 }
+    "domains": {
+      "description": "Custom domains for this service.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string"
+              },
+              "target_port": {
+                "description": "Target port for the domain.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["domain"],
+            "additionalProperties": false
+          }
+        ]
       }
-    },
-    "restart_policy": {
-      "type": "string",
-      "enum": ["ALWAYS", "NEVER", "ON_FAILURE"],
-      "description": "Restart policy for the service."
-    },
-    "healthcheck": {
-      "type": "object",
-      "required": ["path"],
-      "additionalProperties": false,
-      "properties": {
-        "path": { "type": "string", "description": "HTTP healthcheck path.", "minLength": 1 },
-        "timeout": {
-          "type": "number",
-          "description": "Timeout in seconds (default: 300).",
-          "exclusiveMinimum": 0
-        }
-      }
-    },
-    "cron_schedule": {
-      "type": "string",
-      "description": "Cron schedule (5-field format). Minimum interval on Railway is 5 minutes."
     },
     "volume": {
+      "description": "Persistent volume configuration.",
       "type": "object",
-      "required": ["mount", "name"],
-      "additionalProperties": false,
       "properties": {
         "mount": {
           "type": "string",
-          "description": "Absolute mount path (e.g., '/data').",
-          "pattern": "^/"
+          "description": "Mount path inside the container (must be absolute, e.g., '/data')."
         },
-        "name": { "type": "string", "description": "Volume name.", "minLength": 1 }
-      }
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Volume name."
+        }
+      },
+      "required": ["mount", "name"],
+      "additionalProperties": false
+    },
+    "region": {
+      "description": "Deployment region.",
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Railway region identifier."
+        },
+        "num_replicas": {
+          "description": "Number of replicas in this region (default: 1).",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["region"],
+      "additionalProperties": false
+    },
+    "restart_policy": {
+      "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE.",
+      "type": "string"
+    },
+    "healthcheck": {
+      "description": "HTTP healthcheck configuration.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HTTP path for healthcheck (e.g., '/health')."
+        },
+        "timeout": {
+          "description": "Healthcheck timeout in seconds (default: 300).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "cron_schedule": {
+      "description": "Cron schedule (5-field format, e.g., '*/5 * * * *').",
+      "type": "string"
     },
     "start_command": {
-      "type": "string",
-      "description": "Custom start command."
+      "description": "Custom start command for the service.",
+      "type": "string"
     },
     "build_command": {
-      "type": "string",
-      "description": "Custom build command (Nixpacks/Heroku builds)."
+      "description": "Custom build command (Nixpacks/Heroku builds).",
+      "type": "string"
     },
     "root_directory": {
-      "type": "string",
-      "description": "Root directory (monorepo support)."
+      "description": "Root directory for the service (monorepo support).",
+      "type": "string"
     },
     "dockerfile_path": {
-      "type": "string",
-      "description": "Path to a custom Dockerfile."
+      "description": "Path to a custom Dockerfile.",
+      "type": "string"
     },
     "pre_deploy_command": {
-      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
-      "description": "Pre-deploy command(s) (e.g., DB migrations). Accepts a string or array of strings."
+      "description": "Command(s) to run before deployment (e.g., DB migrations).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "restart_policy_max_retries": {
-      "type": "integer",
       "description": "Max retries for ON_FAILURE restart policy.",
-      "minimum": 0
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     },
     "sleep_application": {
-      "type": "boolean",
-      "description": "Enable serverless sleeping. Containers scale to zero when idle and wake on incoming requests."
+      "description": "Enable serverless sleeping. Containers scale to zero when idle.",
+      "type": "boolean"
     },
     "builder": {
-      "type": "string",
-      "description": "Builder to use for deployments.",
-      "enum": ["RAILPACK", "NIXPACKS", "HEROKU", "PAKETO"]
+      "description": "Builder: RAILPACK, NIXPACKS, HEROKU, or PAKETO.",
+      "type": "string"
     },
     "watch_patterns": {
+      "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
       "type": "array",
-      "description": "Gitignore-style patterns to trigger deploys based on changed file paths (e.g., '/src/**', 'package.json').",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "draining_seconds": {
-      "type": "integer",
       "description": "Time in seconds between SIGTERM and SIGKILL during deployment teardown.",
-      "minimum": 0
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     },
     "overlap_seconds": {
-      "type": "integer",
       "description": "Time in seconds the old deployment overlaps with the new one during blue-green deploys.",
-      "minimum": 0
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     },
     "ipv6_egress": {
-      "type": "boolean",
-      "description": "Enable IPv6 outbound traffic for the service."
+      "description": "Enable IPv6 outbound traffic for the service.",
+      "type": "boolean"
     },
     "branch": {
-      "type": "string",
-      "description": "GitHub branch to deploy from (e.g., 'main', 'develop'). Changes are auto-deployed from this branch."
+      "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
+      "type": "string"
     },
     "check_suites": {
-      "type": "boolean",
-      "description": "Wait for CI check suites (GitHub Actions) to complete before deploying."
+      "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
+      "type": "boolean"
     },
     "registry_credentials": {
-      "type": "object",
       "description": "Registry credentials for private container images.",
-      "required": ["username", "password"],
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "username": {
           "type": "string",
@@ -183,59 +210,88 @@
           "type": "string",
           "description": "Registry password. Supports ${ENV_VAR} syntax."
         }
-      }
+      },
+      "required": ["username", "password"],
+      "additionalProperties": false
     },
     "railway_domain": {
-      "oneOf": [
-        { "type": "boolean" },
+      "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
         {
           "type": "object",
-          "required": ["target_port"],
-          "additionalProperties": false,
           "properties": {
             "target_port": {
               "type": "integer",
-              "minimum": 1,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
               "description": "Target port for the Railway-provided domain."
             }
-          }
+          },
+          "required": ["target_port"],
+          "additionalProperties": false
         }
-      ],
-      "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port."
+      ]
     },
     "tcp_proxies": {
-      "type": "array",
       "description": "Multiple TCP proxy application ports.",
-      "items": { "type": "integer", "minimum": 1 }
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      }
     },
     "limits": {
-      "type": "object",
       "description": "Resource limits for the service.",
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "memory_gb": {
-          "type": "number",
           "description": "Memory limit in GB.",
+          "type": "number",
           "exclusiveMinimum": 0
         },
         "vcpus": {
-          "type": "number",
           "description": "vCPU limit.",
+          "type": "number",
           "exclusiveMinimum": 0
         }
-      }
+      },
+      "additionalProperties": false
     },
     "railway_config_file": {
-      "type": "string",
-      "description": "Path to a Railway config file for the service."
+      "description": "Path to a railway.json or railway.toml config-as-code file in the repository.",
+      "type": "string"
     },
     "static_outbound_ips": {
-      "type": "boolean",
-      "description": "Enable static outbound IPs (egress gateways) for the service."
+      "description": "Enable static outbound IPs (egress gateways) for the service.",
+      "type": "boolean"
     },
-    "metal": {
-      "type": "boolean",
-      "description": "Enable Railway Metal (VM runtime) builds for the service."
+    "params": {
+      "description": "Parameter definitions. Each param can be required or have a default value.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "description": "Whether this parameter must be provided by the environment config.",
+            "type": "boolean"
+          },
+          "default": {
+            "description": "Default value if not provided by the environment config.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     }
-  }
+  },
+  "additionalProperties": false,
+  "description": "Reusable service template with parameterized configuration.",
+  "title": "Railway Deploy Service Template"
 }

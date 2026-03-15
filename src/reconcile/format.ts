@@ -1,19 +1,6 @@
+import { logger } from "../logger.js";
 import type { Change, Changeset } from "../types/changeset.js";
 import type { ServiceState } from "../types/state.js";
-
-// ANSI color helpers
-function green(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[32m${text}\x1b[0m`;
-}
-function red(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[31m${text}\x1b[0m`;
-}
-function yellow(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[33m${text}\x1b[0m`;
-}
-function dim(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[2m${text}\x1b[0m`;
-}
 
 /** Patterns that indicate a variable value is sensitive */
 const SENSITIVE_PATTERNS = [
@@ -145,6 +132,15 @@ function describeChange(change: Change): ChangeDescription {
         serviceName: change.serviceName,
         summary: `domain: ${change.domain}`,
       };
+    case "update-domain": {
+      const port = change.targetPort ? ` (port ${change.targetPort})` : "";
+      return {
+        category: "Domain",
+        action: "update",
+        serviceName: change.serviceName,
+        summary: `domain: ${change.domain}${port}`,
+      };
+    }
 
     case "create-service-domain": {
       const port = change.targetPort ? ` (port ${change.targetPort})` : "";
@@ -162,6 +158,15 @@ function describeChange(change: Change): ChangeDescription {
         serviceName: change.serviceName,
         summary: "railway domain",
       };
+    case "update-service-domain": {
+      const port = change.targetPort ? ` (port ${change.targetPort})` : "";
+      return {
+        category: "Railway domain",
+        action: "update",
+        serviceName: change.serviceName,
+        summary: `railway domain: ${change.domain}${port}`,
+      };
+    }
 
     case "create-volume":
       return {
@@ -170,6 +175,17 @@ function describeChange(change: Change): ChangeDescription {
         serviceName: change.serviceName,
         summary: `volume: ${change.mount}`,
       };
+    case "update-volume": {
+      const parts: string[] = [];
+      if (change.name) parts.push(`name: ${change.name}`);
+      if (change.mount) parts.push(`mount: ${change.mount}`);
+      return {
+        category: "Volume",
+        action: "update",
+        serviceName: change.serviceName,
+        summary: `volume: ${parts.join(", ")}`,
+      };
+    }
     case "delete-volume":
       return {
         category: "Volume",
@@ -221,25 +237,6 @@ function describeChange(change: Change): ChangeDescription {
         summary: "static outbound IPs: disable",
       };
 
-    case "enable-service-feature-flag": {
-      const flagName = change.flag === "USE_VM_RUNTIME" ? "metal" : change.flag;
-      return {
-        category: "Feature flags",
-        action: "create",
-        serviceName: change.serviceName,
-        summary: `${flagName}: enable`,
-      };
-    }
-    case "disable-service-feature-flag": {
-      const flagName = change.flag === "USE_VM_RUNTIME" ? "metal" : change.flag;
-      return {
-        category: "Feature flags",
-        action: "delete",
-        serviceName: change.serviceName,
-        summary: `${flagName}: disable`,
-      };
-    }
-
     case "create-bucket":
       return {
         category: "Buckets",
@@ -271,10 +268,10 @@ export function changeLabel(change: Change): string {
   return `${prefix}${desc.summary}`;
 }
 
-const ACTION_ICON: Record<Action, (noColor: boolean) => string> = {
-  create: (nc) => green("+", nc),
-  update: (nc) => yellow("~", nc),
-  delete: (nc) => red("-", nc),
+const ACTION_ICON: Record<Action, string> = {
+  create: "+",
+  update: "~",
+  delete: "-",
 };
 
 /**
@@ -288,22 +285,20 @@ export function printChangeset(
   changeset: Changeset,
   options?: {
     verbose?: boolean;
-    noColor?: boolean;
     currentState?: {
       services: Record<string, ServiceState>;
       sharedVariables: Record<string, string>;
     };
   },
 ): void {
-  const noColor = options?.noColor ?? false;
   const verbose = options?.verbose ?? false;
 
   if (changeset.changes.length === 0) {
-    console.log(`\n${green("No changes needed", noColor)} — Railway matches desired state.\n`);
+    logger.info(`\nNo changes needed — Railway matches desired state.\n`);
     return;
   }
 
-  console.log(`\nChangeset (${changeset.changes.length} changes):\n`);
+  logger.info(`\nChangeset (${changeset.changes.length} changes):\n`);
 
   // Describe all changes and group by service (null = project-level)
   const described = changeset.changes.map((change) => ({ change, desc: describeChange(change) }));
@@ -325,21 +320,19 @@ export function printChangeset(
   const projectChanges = serviceGroups.get(null);
   if (projectChanges) {
     for (const { change, desc } of projectChanges) {
-      const icon = ACTION_ICON[desc.action](noColor);
+      const icon = ACTION_ICON[desc.action];
       if (verbose && change.type === "upsert-shared-variables") {
-        console.log(`  ${yellow("~", noColor)} Shared variables:`);
+        logger.info(`  ~ Shared variables:`);
         for (const [key, value] of Object.entries(change.variables)) {
           const oldVal = options?.currentState?.sharedVariables[key];
           const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
-          console.log(
-            `    ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
-          );
+          logger.info(`    ${icon} ${key}: "${oldStr}" → "${maskValue(key, value)}"`);
         }
       } else {
-        console.log(`  ${icon} ${desc.category}: ${desc.summary}`);
+        logger.info(`  ${icon} ${desc.category}: ${desc.summary}`);
       }
     }
-    console.log();
+    logger.info("");
     serviceGroups.delete(null);
   }
 
@@ -352,37 +345,35 @@ export function printChangeset(
       (e) => e.desc.action === "delete" && e.desc.category === "Service",
     );
     const headerAction: Action = hasCreate ? "create" : hasDelete ? "delete" : "update";
-    const headerIcon = ACTION_ICON[headerAction](noColor);
-    console.log(`  ${headerIcon} ${serviceName}:`);
+    const headerIcon = ACTION_ICON[headerAction];
+    logger.info(`  ${headerIcon} ${serviceName}:`);
     for (const { change, desc } of entries) {
-      const icon = ACTION_ICON[desc.action](noColor);
+      const icon = ACTION_ICON[desc.action];
 
       if (verbose && change.type === "update-service-settings") {
         for (const [key, value] of Object.entries(change.settings)) {
           if (isSensitive(key)) {
-            console.log(`    ${icon} ${key}: ***`);
+            logger.info(`    ${icon} ${key}: ***`);
             continue;
           }
           const currentSvc = options?.currentState?.services[change.serviceName];
           const oldVal = currentSvc ? currentSvc[key as keyof ServiceState] : undefined;
           const oldStr = oldVal !== undefined ? JSON.stringify(oldVal) : "(unset)";
           const newStr = value === null ? "(unset)" : JSON.stringify(value);
-          console.log(`    ${icon} ${key}: ${oldStr} → ${newStr}`);
+          logger.info(`    ${icon} ${key}: ${oldStr} → ${newStr}`);
         }
       } else if (verbose && change.type === "upsert-variables") {
         for (const [key, value] of Object.entries(change.variables)) {
           const currentSvc = options?.currentState?.services[change.serviceName];
           const oldVal = currentSvc?.variables[key];
           const oldStr = oldVal !== undefined ? maskValue(key, oldVal) : "(unset)";
-          console.log(
-            `    ${icon} ${key}: ${dim(`"${oldStr}"`, noColor)} → ${dim(`"${maskValue(key, value)}"`, noColor)}`,
-          );
+          logger.info(`    ${icon} ${key}: "${oldStr}" → "${maskValue(key, value)}"`);
         }
       } else {
-        console.log(`    ${icon} ${desc.summary}`);
+        logger.info(`    ${icon} ${desc.summary}`);
       }
     }
-    console.log();
+    logger.info("");
   }
 
   // Summary line
@@ -396,31 +387,27 @@ export function printChangeset(
   }
 
   const parts: string[] = [];
-  if (createCount > 0) parts.push(green(`${createCount} to create`, noColor));
-  if (updateCount > 0) parts.push(yellow(`${updateCount} to update`, noColor));
-  if (deleteCount > 0) parts.push(red(`${deleteCount} to delete`, noColor));
-  console.log(`  ${parts.join(", ")}\n`);
+  if (createCount > 0) parts.push(`${createCount} to create`);
+  if (updateCount > 0) parts.push(`${updateCount} to update`);
+  if (deleteCount > 0) parts.push(`${deleteCount} to delete`);
+  logger.info(`  ${parts.join(", ")}\n`);
 }
 
 /**
  * Print apply results.
  */
-export function printApplyResult(
-  result: {
-    applied: Change[];
-    failed: Array<{ change: Change; error: string }>;
-  },
-  noColor?: boolean,
-): void {
-  const nc = noColor ?? false;
-  console.log("\nApply results:");
-  console.log(`  ${green(`${result.applied.length} succeeded`, nc)}`);
+export function printApplyResult(result: {
+  applied: Change[];
+  failed: Array<{ change: Change; error: string }>;
+}): void {
+  logger.info("\nApply results:");
+  logger.info(`  ${result.applied.length} succeeded`);
 
   if (result.failed.length > 0) {
-    console.log(`  ${red(`${result.failed.length} failed:`, nc)}\n`);
+    logger.error(`  ${result.failed.length} failed:\n`);
     for (const f of result.failed) {
-      console.log(`    ${changeLabel(f.change)}: ${f.error}`);
+      logger.info(`    ${changeLabel(f.change)}: ${f.error}`);
     }
   }
-  console.log();
+  logger.info("");
 }

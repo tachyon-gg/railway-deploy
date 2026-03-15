@@ -8,13 +8,15 @@ import { parse as parseYaml } from "yaml";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
 
-import { loadEnvironmentConfig } from "./config/loader.js";
-import { validateEnvironmentConfig } from "./config/schema.js";
+import { loadProjectConfig } from "./config/loader.js";
+import { validateProjectConfig } from "./config/schema.js";
 import { loadEnvFile } from "./config/variables.js";
+import { logger } from "./logger.js";
 import { createClient } from "./railway/client.js";
 import { fetchCurrentState, resolveEnvironmentId, resolveProjectId } from "./railway/queries.js";
-import { applyChangeset, printApplyResult, printChangeset } from "./reconcile/apply.js";
+import { applyChangeset } from "./reconcile/apply.js";
 import { computeChangeset } from "./reconcile/diff.js";
+import { printApplyResult, printChangeset } from "./reconcile/format.js";
 
 interface CliOptions {
   apply?: boolean;
@@ -23,6 +25,8 @@ interface CliOptions {
   verbose?: boolean;
   color?: boolean;
   validate?: boolean;
+  environment?: string;
+  allowDataLoss?: boolean;
 }
 
 async function confirm(message: string): Promise<boolean> {
@@ -44,10 +48,10 @@ Define your Railway services, variables, domains, volumes, and more in YAML,
 and railway-deploy will diff against the live state and apply changes.
 
 Examples:
-  $ railway-deploy environments/production.yaml
-  $ railway-deploy --apply -y environments/staging.yaml
-  $ railway-deploy --validate environments/production.yaml
-  $ railway-deploy --env-file .env --apply environments/production.yaml
+  $ railway-deploy project.yaml -e production
+  $ railway-deploy --apply -y -e staging project.yaml
+  $ railway-deploy --validate project.yaml
+  $ railway-deploy --env-file .env -e alpha --apply project.yaml
 
 Environment:
   RAILWAY_TOKEN    Railway API token (required for all operations except --validate)
@@ -55,23 +59,31 @@ Environment:
 Docs: https://github.com/tachyon-gg/railway-deploy`,
   )
   .version(version)
-  .argument("<config>", "path to environment YAML config file")
+  .argument("<config>", "path to project YAML config file")
+  .option("-e, --environment <name>", "target environment (required except for --validate)")
   .option("--apply", "execute changes (default is dry-run)")
   .option("--env-file <path>", "load .env file for ${VAR} resolution")
   .option("--no-color", "disable colored output")
   .option("--validate", "validate config without connecting to Railway")
   .option("-v, --verbose", "show detailed diffs with old and new values")
   .option("-y, --yes", "skip confirmation prompts for destructive operations")
+  .option("--allow-data-loss", "allow operations that can cause data loss (e.g., volume deletion)")
   .action(async (configPath: string, opts: CliOptions) => {
     try {
       await run(configPath, opts);
     } catch (err) {
-      console.error(formatError(err, opts.verbose ?? false));
+      logger.error(err);
       process.exit(1);
     }
   });
 
 async function run(configPath: string, opts: CliOptions) {
+  // Configure color and log level
+  if (opts.color === false) {
+    process.env.NO_COLOR = "1";
+  }
+  logger.level = opts.verbose ? 4 : 3;
+
   // Load .env file if specified (before any config loading)
   if (opts.envFile) {
     const envVars = loadEnvFile(opts.envFile);
@@ -86,51 +98,61 @@ async function run(configPath: string, opts: CliOptions) {
     }
     const raw = readFileSync(absPath, "utf-8");
     const parsed = parseYaml(raw);
-    validateEnvironmentConfig(parsed);
+    const config = validateProjectConfig(parsed);
 
     // Also try full config load to catch template/param issues
     // Use lenient mode so missing ${ENV_VAR} references don't fail validation
-    loadEnvironmentConfig(configPath, { lenient: true });
+    const envsToValidate = opts.environment ? [opts.environment] : config.environments;
+    for (const env of envsToValidate) {
+      loadProjectConfig(configPath, env, { lenient: true });
+    }
 
-    console.log("Config is valid.");
+    logger.info("Config is valid.");
     process.exit(0);
+  }
+
+  // Require --environment for all non-validate operations
+  if (!opts.environment) {
+    logger.error("--environment (-e) is required.");
+    logger.error("  Specify which environment to target: railway-deploy <config> -e <environment>");
+    process.exit(1);
   }
 
   const token = process.env.RAILWAY_TOKEN;
   if (!token) {
-    console.error("Error: RAILWAY_TOKEN environment variable is required.");
-    console.error("  Set it with: export RAILWAY_TOKEN=<your-token>");
+    logger.error("RAILWAY_TOKEN environment variable is required.");
+    logger.error("  Set it with: export RAILWAY_TOKEN=<your-token>");
     process.exit(1);
   }
 
   // Phase 0: Load and resolve config
-  console.log(`Loading config: ${configPath}`);
+  logger.info(`Loading config: ${configPath}`);
   const {
     state: desiredState,
     deletedVars,
     deletedSharedVars,
     projectName,
     environmentName,
-  } = loadEnvironmentConfig(configPath);
+  } = loadProjectConfig(configPath, opts.environment);
 
-  console.log(`Project: ${projectName}`);
-  console.log(`Environment: ${environmentName}`);
-  console.log(`Services: ${Object.keys(desiredState.services).join(", ")}`);
+  logger.info(`Project: ${projectName}`);
+  logger.info(`Environment: ${environmentName}`);
+  logger.info(`Services: ${Object.keys(desiredState.services).join(", ")}`);
 
   // Phase 1: Connect to Railway and fetch current state
   const client = createClient(token);
 
-  console.log("\nResolving project and environment...");
+  logger.info("\nResolving project and environment...");
   const projectId = await resolveProjectId(client, projectName);
-  const environmentId = await resolveEnvironmentId(client, projectId, environmentName);
+  const environmentId = await resolveEnvironmentId(client, projectId, environmentName, opts.apply);
 
   desiredState.projectId = projectId;
   desiredState.environmentId = environmentId;
 
-  console.log(`Project ID: ${projectId}`);
-  console.log(`Environment ID: ${environmentId}`);
+  logger.info(`Project ID: ${projectId}`);
+  logger.info(`Environment ID: ${environmentId}`);
 
-  console.log("\nFetching current state from Railway...");
+  logger.info("\nFetching current state from Railway...");
   const {
     state: currentState,
     domainMap,
@@ -139,33 +161,37 @@ async function run(configPath: string, opts: CliOptions) {
     tcpProxyMap,
   } = await fetchCurrentState(client, projectId, environmentId);
 
-  console.log(`Found ${Object.keys(currentState.services).length} existing service(s)`);
+  logger.info(`Found ${Object.keys(currentState.services).length} existing service(s)`);
 
   // Phase 2: Compute diff
-  const changeset = computeChangeset(
-    desiredState,
-    currentState,
-    deletedVars,
-    deletedSharedVars,
+  let changeset = computeChangeset(desiredState, currentState, deletedVars, deletedSharedVars, {
     domainMap,
     volumeMap,
     serviceDomainMap,
     tcpProxyMap,
-  );
+  });
 
-  const noColor = opts.color === false;
   const verbose = opts.verbose ?? false;
+
+  // Filter out data-destructive operations unless --allow-data-loss is set
+  const DATA_LOSS_TYPES = new Set(["delete-volume"]);
+  const dataLossChanges = changeset.changes.filter((c) => DATA_LOSS_TYPES.has(c.type));
+  if (dataLossChanges.length > 0 && !opts.allowDataLoss) {
+    changeset = { changes: changeset.changes.filter((c) => !DATA_LOSS_TYPES.has(c.type)) };
+    logger.warn(
+      `Filtered ${dataLossChanges.length} data-destructive operation(s) (use --allow-data-loss to include)`,
+    );
+  }
 
   printChangeset(changeset, {
     verbose,
-    noColor,
     currentState,
   });
 
   // Phase 3: Apply (if --apply flag is set)
   if (opts.apply) {
     if (changeset.changes.length === 0) {
-      console.log("Nothing to apply.");
+      logger.info("Nothing to apply.");
       process.exit(0);
     }
 
@@ -180,8 +206,7 @@ async function run(configPath: string, opts: CliOptions) {
         c.type === "delete-shared-variables" ||
         c.type === "delete-service-domain" ||
         c.type === "delete-tcp-proxy" ||
-        c.type === "disable-static-ips" ||
-        c.type === "disable-service-feature-flag",
+        c.type === "disable-static-ips",
     );
 
     if (hasDestructive && !opts.yes) {
@@ -189,62 +214,24 @@ async function run(configPath: string, opts: CliOptions) {
         "This changeset includes destructive operations (deletions). Continue?",
       );
       if (!ok) {
-        console.log("Aborted.");
+        logger.info("Aborted.");
         process.exit(2);
       }
     }
 
-    console.log("Applying changes...\n");
-    const result = await applyChangeset(client, changeset, projectId, environmentId, {
-      verbose,
-      noColor,
-    });
-    printApplyResult(result, noColor);
+    logger.info("Applying changes...\n");
+    const result = await applyChangeset(client, changeset, projectId, environmentId);
+    printApplyResult(result);
 
     if (result.failed.length > 0) {
       process.exit(1);
     }
   } else {
     if (changeset.changes.length > 0) {
-      console.log("Run with --apply to execute these changes.");
+      logger.info("Run with --apply to execute these changes.");
       process.exit(2);
     }
   }
-}
-
-function formatError(err: unknown, verbose: boolean): string {
-  if (!(err instanceof Error)) return String(err);
-
-  const msg = err.message;
-
-  // Zod validation errors are already formatted
-  if (msg.startsWith("Invalid environment config:") || msg.startsWith("Invalid service template")) {
-    return msg;
-  }
-
-  // Config/file errors
-  if (msg.includes("not found") || msg.includes("Failed to read") || msg.includes("Invalid YAML")) {
-    return `Error: ${msg}`;
-  }
-
-  // Railway API errors
-  if (msg.includes("GraphQL") || msg.includes("request")) {
-    const formatted = `Railway API error: ${msg}`;
-    if (!verbose) {
-      return `${formatted}\n  (run with --verbose for full stack trace)`;
-    }
-    return `${formatted}\n${err.stack || ""}`;
-  }
-
-  // Network errors
-  if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed")) {
-    return `Network error: ${msg}\n  Check your RAILWAY_TOKEN and network connectivity.`;
-  }
-
-  if (verbose && err.stack) {
-    return err.stack;
-  }
-  return `Error: ${msg}`;
 }
 
 program.parse();

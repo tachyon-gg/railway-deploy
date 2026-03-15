@@ -1,6 +1,5 @@
 import type { GraphQLClient } from "graphql-request";
 import type {
-  ActiveServiceFeatureFlag,
   DeploymentTriggerUpdateInput,
   ServiceCreateInput,
   ServiceInstanceUpdateInput,
@@ -9,15 +8,16 @@ import {
   BucketCreateDocument,
   CustomDomainCreateDocument,
   CustomDomainDeleteDocument,
+  CustomDomainUpdateDocument,
   DeploymentTriggerUpdateDocument,
   EgressGatewayAssociationCreateDocument,
   EgressGatewayAssociationsClearDocument,
+  EnvironmentCreateDocument,
   ServiceCreateDocument,
   ServiceDeleteDocument,
   ServiceDomainCreateDocument,
   ServiceDomainDeleteDocument,
-  ServiceFeatureFlagAddDocument,
-  ServiceFeatureFlagRemoveDocument,
+  ServiceDomainUpdateDocument,
   ServiceInstanceLimitsUpdateDocument,
   ServiceInstanceUpdateDocument,
   TcpProxyCreateDocument,
@@ -26,6 +26,8 @@ import {
   VariableDeleteDocument,
   VolumeCreateDocument,
   VolumeDeleteDocument,
+  VolumeInstanceUpdateDocument,
+  VolumeUpdateDocument,
 } from "../generated/graphql.js";
 
 export async function createService(
@@ -144,6 +146,19 @@ export async function createCustomDomain(
   return data.customDomainCreate;
 }
 
+export async function updateCustomDomain(
+  client: GraphQLClient,
+  domainId: string,
+  environmentId: string,
+  targetPort?: number,
+) {
+  await client.request(CustomDomainUpdateDocument, {
+    id: domainId,
+    environmentId,
+    ...(targetPort !== undefined ? { targetPort } : {}),
+  });
+}
+
 export async function deleteCustomDomain(client: GraphQLClient, domainId: string) {
   await client.request(CustomDomainDeleteDocument, { id: domainId });
 }
@@ -170,6 +185,23 @@ export async function createVolume(
 ) {
   await client.request(VolumeCreateDocument, {
     input: { projectId, serviceId, environmentId, mountPath },
+  });
+}
+
+export async function updateVolume(client: GraphQLClient, volumeId: string, name: string) {
+  await client.request(VolumeUpdateDocument, { volumeId, input: { name } });
+}
+
+export async function updateVolumeInstance(
+  client: GraphQLClient,
+  volumeId: string,
+  environmentId: string,
+  mountPath: string,
+) {
+  await client.request(VolumeInstanceUpdateDocument, {
+    volumeId,
+    environmentId,
+    input: { mountPath },
   });
 }
 
@@ -203,6 +235,19 @@ export async function createServiceDomain(
     },
   });
   return data.serviceDomainCreate;
+}
+
+export async function updateServiceDomain(
+  client: GraphQLClient,
+  input: {
+    serviceDomainId: string;
+    serviceId: string;
+    environmentId: string;
+    domain: string;
+    targetPort?: number;
+  },
+) {
+  await client.request(ServiceDomainUpdateDocument, { input });
 }
 
 export async function deleteServiceDomain(client: GraphQLClient, domainId: string) {
@@ -262,29 +307,16 @@ export async function clearEgressGateways(
   });
 }
 
-export async function addServiceFeatureFlag(
-  client: GraphQLClient,
-  serviceId: string,
-  flag: ActiveServiceFeatureFlag,
-) {
-  await client.request(ServiceFeatureFlagAddDocument, {
-    input: { serviceId, flag },
-  });
-}
-
-export async function removeServiceFeatureFlag(
-  client: GraphQLClient,
-  serviceId: string,
-  flag: ActiveServiceFeatureFlag,
-) {
-  await client.request(ServiceFeatureFlagRemoveDocument, {
-    input: { serviceId, flag },
-  });
-}
-
 export async function createBucket(client: GraphQLClient, projectId: string, name: string) {
   const data = await client.request(BucketCreateDocument, {
     input: { projectId, name },
   });
   return data.bucketCreate;
+}
+
+export async function createEnvironment(client: GraphQLClient, projectId: string, name: string) {
+  const data = await client.request(EnvironmentCreateDocument, {
+    input: { projectId, name },
+  });
+  return data.environmentCreate;
 }

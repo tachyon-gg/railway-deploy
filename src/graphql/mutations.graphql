@@ -24,6 +24,10 @@ mutation CustomDomainCreate($input: CustomDomainCreateInput!) {
   }
 }
 
+mutation CustomDomainUpdate($id: String!, $environmentId: String!, $targetPort: Int) {
+  customDomainUpdate(id: $id, environmentId: $environmentId, targetPort: $targetPort)
+}
+
 mutation CustomDomainDelete($id: String!) {
   customDomainDelete(id: $id)
 }
@@ -43,6 +47,21 @@ mutation VolumeCreate($input: VolumeCreateInput!) {
   }
 }
 
+mutation VolumeUpdate($volumeId: String!, $input: VolumeUpdateInput!) {
+  volumeUpdate(volumeId: $volumeId, input: $input) {
+    id
+    name
+  }
+}
+
+mutation VolumeInstanceUpdate(
+  $volumeId: String!
+  $environmentId: String
+  $input: VolumeInstanceUpdateInput!
+) {
+  volumeInstanceUpdate(volumeId: $volumeId, environmentId: $environmentId, input: $input)
+}
+
 mutation VolumeDelete($volumeId: String!) {
   volumeDelete(volumeId: $volumeId)
 }
@@ -59,6 +78,10 @@ mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
     id
     domain
   }
+}
+
+mutation ServiceDomainUpdate($input: ServiceDomainUpdateInput!) {
+  serviceDomainUpdate(input: $input)
 }
 
 mutation ServiceDomainDelete($id: String!) {
@@ -99,10 +122,9 @@ mutation EgressGatewayAssociationsClear($input: EgressGatewayServiceTargetInput!
   egressGatewayAssociationsClear(input: $input)
 }
 
-mutation ServiceFeatureFlagAdd($input: ServiceFeatureFlagToggleInput!) {
-  serviceFeatureFlagAdd(input: $input)
-}
-
-mutation ServiceFeatureFlagRemove($input: ServiceFeatureFlagToggleInput!) {
-  serviceFeatureFlagRemove(input: $input)
+mutation EnvironmentCreate($input: EnvironmentCreateInput!) {
+  environmentCreate(input: $input) {
+    id
+    name
+  }
 }

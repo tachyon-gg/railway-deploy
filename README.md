@@ -16,21 +16,23 @@ Declarative infrastructure management for [Railway](https://railway.com). Define
 npx @tachyon-gg/railway-deploy --help
 
 # Validate a config file
-npx @tachyon-gg/railway-deploy --validate environments/production.yaml
+npx @tachyon-gg/railway-deploy --validate project.yaml
 
 # Dry-run (show what would change)
-npx @tachyon-gg/railway-deploy environments/production.yaml
+npx @tachyon-gg/railway-deploy project.yaml -e production
 
 # Apply changes
-npx @tachyon-gg/railway-deploy --apply environments/production.yaml
+npx @tachyon-gg/railway-deploy --apply -e production project.yaml
 ```
 
 ## CLI flags
 
 | Flag | Description |
 |------|-------------|
+| `-e, --environment <name>` | Target environment (required except for `--validate`) |
 | `--apply` | Execute changes (default: dry-run) |
 | `-y, --yes` | Skip confirmation for destructive ops |
+| `--allow-data-loss` | Allow operations that can cause data loss (e.g., volume deletion) |
 | `--env-file <path>` | Load `.env` file for `${VAR}` resolution |
 | `-v, --verbose` | Show detailed diffs (old -> new values) |
 | `--no-color` | Disable ANSI color output |
@@ -46,62 +48,109 @@ npx @tachyon-gg/railway-deploy --apply environments/production.yaml
 
 ## Config reference
 
-Environment configs are YAML files describing the desired state of a Railway environment. Add schema support to your editor:
+Project configs are YAML files describing the desired state of a Railway project across one or more environments. Add schema support to your editor:
 
 ```yaml
-# yaml-language-server: $schema=./schemas/environment.schema.json
+# yaml-language-server: $schema=./schemas/project.schema.json
 ```
 
 ### Top-level fields
 
 ```yaml
 project: My Project          # Railway project name (must match exactly)
-environment: production      # Railway environment name
+environments:                # Environments to manage
+  - alpha
+  - production
 
 shared_variables:            # Variables shared across all services
-  APP_ENV: production
-  API_PORT: "8080"
+  APP_PORT: "8080"           # Default for all environments
+  alpha:                     # Per-environment overrides
+    API_KEY: ${ALPHA_API_KEY}
+  production:
+    API_KEY: ${PROD_API_KEY}
 
 services:                    # Map of service name -> config
   web: { ... }
   worker: { ... }
 
-buckets:                     # S3-compatible buckets
+buckets:                     # S3-compatible buckets (project-level)
   media:
     name: media-uploads
 ```
 
+### Shared variables
+
+Shared variables are per-environment in Railway. In the config, top-level string keys are defaults applied to all environments. Keys matching a declared environment name are override blocks that add or replace defaults for that environment.
+
+```yaml
+shared_variables:
+  # Defaults — applied to all environments
+  ADMIN_PORT: "8081"
+  PUBLIC_PORT: "8080"
+  # Overrides — per-environment
+  alpha:
+    JWT_SECRET: ${JWT_SECRET_ALPHA}
+  production:
+    JWT_SECRET: ${JWT_SECRET_PROD}
+```
+
 ### Service configuration
 
-Each service can be defined inline or via a template:
+Each service defines defaults that apply to all environments. Per-environment overrides go under `environments.<name>`:
 
 ```yaml
 services:
-  # Inline service (Docker image)
+  # Service with per-environment overrides
+  web:
+    template: services/web.yaml
+    params:                          # Default params (all environments)
+      db_url: ${{Postgres.DATABASE_URL}}
+    environments:
+      alpha:
+        params:
+          tag: alpha
+          domain: alpha.example.com
+      production:
+        params:
+          tag: latest
+          domain: example.com
+        variables:
+          RATE_LIMIT: "1000"
+
+  # Service without environments block — exists in all environments
   redis:
     source:
       image: redis:7
-    variables:
-      ALLOW_EMPTY_PASSWORD: "yes"
+    volume:
+      mount: /data
+      name: redis-data
 
-  # Inline service (GitHub repo)
-  api:
+  # Service with environments block — only exists in listed environments
+  debug-tools:
     source:
-      repo: myorg/my-api
-    branch: main
-
-  # Template-based service
-  web:
-    template: ../services/web.yaml
-    params:
-      tag: v1.2.3
-    variables:
-      EXTRA_VAR: override-value
+      image: debug:latest
+    environments:
+      alpha: {}                      # Only in alpha
 ```
+
+### Service scope rules
+
+- Service **has** `environments` block → only exists in environments listed there
+- Service **has no** `environments` block → exists in ALL declared environments
+
+### Merge rules
+
+When a service has per-environment overrides:
+
+| Field type | Merge behavior |
+|------------|---------------|
+| `params`, `variables` | Shallow merge (override keys replace defaults) |
+| `domains`, `source`, `volume`, `region`, `healthcheck` | Override replaces entirely |
+| Scalar fields (`start_command`, `builder`, `template`, etc.) | Override replaces |
 
 ### Full service options
 
-Every option below can be used on both inline services and service templates.
+Every option below can be used on both service defaults and per-environment overrides.
 
 #### Source
 
@@ -130,10 +179,9 @@ watch_patterns:                    # File patterns that trigger deploys
   - /packages/api/src/**
   - /packages/shared/**
 railway_config_file: railway.toml  # Path to railway.json/toml for config-as-code
-metal: true                        # Enable Railway Metal builds (service-level, see note below)
 ```
 
-**Note:** Some settings are **service-level** in Railway (applied globally, not per-environment): `metal`, service creation, and service deletion. If you manage multiple environments for the same project, these settings will affect all environments regardless of which YAML file sets them.
+**Note:** Some settings are **service-level** in Railway (applied globally, not per-environment): service creation and service deletion. If you set these differently across environments, the last one applied wins.
 
 #### Deploy
 
@@ -263,41 +311,51 @@ region:
   num_replicas: 1
 ```
 
-Referenced from an environment config:
+Referenced from a project config:
 
 ```yaml
 services:
   web:
-    template: ../services/web.yaml
-    params:
-      tag: v2.0.0
-      replicas: "3"
-    variables:
-      EXTRA: added-by-env      # Merged with template variables
-      APP_VERSION: null         # Deletes the template-defined variable
-    domains:
-      - production.example.com  # Overrides template domain
+    template: services/web.yaml
+    params:                          # Default params for all environments
+      replicas: "1"
+    environments:
+      alpha:
+        params:
+          tag: alpha
+      production:
+        params:
+          tag: v2.0.0
+          replicas: "3"
+        variables:
+          EXTRA: added-by-env        # Merged with template variables
+          APP_VERSION: null           # Deletes the template-defined variable
+        domains:
+          - production.example.com   # Overrides template domain
 ```
 
-Template override precedence: environment config values override template values for `source`, `domains`, and `variables`.
+Template override precedence: environment override values override service defaults, which override template values for `source`, `domains`, and `variables`.
 
 ### Complete example
 
 ```yaml
-# yaml-language-server: $schema=./schemas/environment.schema.json
+# yaml-language-server: $schema=./schemas/project.schema.json
 project: My SaaS App
-environment: production
+environments:
+  - staging
+  - production
 
 shared_variables:
-  APP_ENV: production
-  SENTRY_DSN: ${SENTRY_DSN}
+  APP_PORT: "3000"
+  staging:
+    SENTRY_DSN: ${SENTRY_DSN_STAGING}
+  production:
+    SENTRY_DSN: ${SENTRY_DSN_PROD}
 
 services:
   web:
     source:
       repo: myorg/web-app
-    branch: main
-    check_suites: true
     builder: NIXPACKS
     build_command: npm run build
     start_command: npm start
@@ -308,20 +366,30 @@ services:
       timeout: 60
     restart_policy: ON_FAILURE
     restart_policy_max_retries: 5
-    domains:
-      - app.example.com
-      - domain: api.example.com
-        target_port: 8080
     railway_domain: true
-    region:
-      region: us-east-1
-      num_replicas: 2
-    limits:
-      memory_gb: 4
-      vcpus: 2
     variables:
       PORT: "3000"
       DATABASE_URL: ${{Postgres.DATABASE_URL}}
+    environments:
+      staging:
+        branch: develop
+        domains:
+          - staging.example.com
+        variables:
+          LOG_LEVEL: debug
+      production:
+        branch: main
+        check_suites: true
+        domains:
+          - app.example.com
+          - domain: api.example.com
+            target_port: 8080
+        region:
+          region: us-east-1
+          num_replicas: 2
+        limits:
+          memory_gb: 4
+          vcpus: 2
 
   postgres:
     source:
@@ -342,7 +410,7 @@ services:
     tcp_proxies: [6379]
 
   worker:
-    template: ../services/worker.yaml
+    template: services/worker.yaml
     params:
       queue: default
     sleep_application: false
@@ -356,8 +424,37 @@ buckets:
 
 Editor support (autocompletion, validation) is available via JSON schemas:
 
-- `schemas/environment.schema.json` -- environment config files
+- `schemas/project.schema.json` -- project config files
 - `schemas/service-template.schema.json` -- service template files
+
+## Migration from v0.2.x
+
+v0.3.0 replaces the per-environment config format with a project-level format:
+
+```yaml
+# Before (v0.2.x) — one file per environment
+project: My App
+environment: production
+services: ...
+
+# After (v0.3.0) — one file per project
+project: My App
+environments:
+  - staging
+  - production
+services:
+  web:
+    # defaults here
+    environments:
+      staging: { ... }
+      production: { ... }
+```
+
+Key changes:
+- `environment` (string) → `environments` (array)
+- `-e <name>` flag is now required
+- Per-environment service overrides go under `services.<name>.environments.<env>`
+- Shared variable defaults + per-env overrides
 
 ## Development
 

@@ -37,7 +37,6 @@ query GetProject($id: String!) {
         node {
           id
           name
-          featureFlags
           serviceInstances {
             edges {
               node {

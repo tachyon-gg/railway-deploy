@@ -1,3 +1,5 @@
+import { logger } from "../logger.js";
+
 /**
  * Retry wrapper with exponential backoff for Railway API calls.
  */
@@ -49,7 +51,7 @@ export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): P
       }
       const delay = Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
       const jitter = delay * (0.5 + Math.random() * 0.5);
-      console.warn(`  Retry ${attempt + 1}/${maxRetries} after ${Math.round(jitter)}ms...`);
+      logger.warn(`Retry ${attempt + 1}/${maxRetries} after ${Math.round(jitter)}ms...`);
       await new Promise((resolve) => setTimeout(resolve, jitter));
     }
   }

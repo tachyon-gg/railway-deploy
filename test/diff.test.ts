@@ -1,4 +1,5 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { logger } from "../src/logger.js";
 import { computeChangeset } from "../src/reconcile/diff.js";
 import type { State } from "../src/types/state.js";
 
@@ -28,7 +29,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(state, state, {}, [], {});
+    const changeset = computeChangeset(state, state, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -45,7 +46,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
 
     const createSvc = changeset.changes.find((c) => c.type === "create-service");
     expect(createSvc).toBeDefined();
@@ -82,7 +83,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const del = changeset.changes.find((c) => c.type === "delete-service");
     expect(del).toBeDefined();
     if (del?.type === "delete-service") {
@@ -113,7 +114,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
 
     const upsert = changeset.changes.find((c) => c.type === "upsert-variables");
     expect(upsert).toBeDefined();
@@ -150,7 +151,9 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, { web: ["EXPLICIT_DEL"] }, [], {});
+    const changeset = computeChangeset(desired, current, { web: ["EXPLICIT_DEL"] }, [], {
+      domainMap: {},
+    });
 
     const del = changeset.changes.find((c) => c.type === "delete-variables");
     expect(del).toBeDefined();
@@ -163,7 +166,7 @@ describe("computeChangeset", () => {
     const desired = makeState({ sharedVariables: { APP: "alpha", NEW: "v" } });
     const current = makeState({ sharedVariables: { APP: "beta", OLD: "x" } });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
 
     const upsert = changeset.changes.find((c) => c.type === "upsert-shared-variables");
     expect(upsert).toBeDefined();
@@ -200,7 +203,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const dom = changeset.changes.find((c) => c.type === "create-domain");
     expect(dom).toBeDefined();
     if (dom?.type === "create-domain") {
@@ -231,7 +234,7 @@ describe("computeChangeset", () => {
     });
 
     const changeset = computeChangeset(desired, current, {}, [], {
-      web: [{ id: "dom-1", domain: "old.example.com" }],
+      domainMap: { web: [{ id: "dom-1", domain: "old.example.com" }] },
     });
 
     const del = changeset.changes.find((c) => c.type === "delete-domain");
@@ -268,7 +271,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -291,7 +294,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-service");
     expect(create).toBeDefined();
     if (create?.type === "create-service") {
@@ -324,7 +327,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     // RAILWAY_* vars should NOT be deleted
     expect(changeset.changes).toEqual([]);
   });
@@ -356,7 +359,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -383,10 +386,12 @@ describe("computeChangeset", () => {
     });
 
     const changeset = computeChangeset(desired, current, {}, [], {
-      web: [
-        { id: "dom-a", domain: "a.example.com" },
-        { id: "dom-c", domain: "c.example.com" },
-      ],
+      domainMap: {
+        web: [
+          { id: "dom-a", domain: "a.example.com" },
+          { id: "dom-c", domain: "c.example.com" },
+        ],
+      },
     });
 
     // b.example.com should be created
@@ -408,7 +413,7 @@ describe("computeChangeset", () => {
     const desired = makeState();
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -425,7 +430,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const deletes = changeset.changes.filter((c) => c.type === "delete-service");
     expect(deletes).toEqual([]);
   });
@@ -454,16 +459,12 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      {
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      volumeMap: {
         web: { volumeId: "vol-1", mount: "/data", name: "vol" },
       },
-    );
+    });
 
     const volDel = changeset.changes.find((c) => c.type === "delete-volume");
     expect(volDel).toBeDefined();
@@ -481,7 +482,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-bucket");
     expect(create).toBeDefined();
     if (create?.type === "create-bucket") {
@@ -501,14 +502,14 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const bucketChanges = changeset.changes.filter(
       (c) => c.type === "create-bucket" || c.type === "delete-bucket",
     );
     expect(bucketChanges).toEqual([]);
   });
 
-  test("detects volume mount change (delete + create)", () => {
+  test("detects volume mount change (update in place)", () => {
     const desired = makeState({
       services: {
         web: {
@@ -532,25 +533,22 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    );
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    });
 
-    const volDel = changeset.changes.find((c) => c.type === "delete-volume");
-    expect(volDel).toBeDefined();
-    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
-    expect(volCreate).toBeDefined();
-    if (volCreate?.type === "create-volume") {
-      expect(volCreate.mount).toBe("/new-data");
+    const volUpdate = changeset.changes.find((c) => c.type === "update-volume");
+    expect(volUpdate).toBeDefined();
+    if (volUpdate?.type === "update-volume") {
+      expect(volUpdate.mount).toBe("/new-data");
+      expect(volUpdate.volumeId).toBe("vol-1");
     }
+    expect(changeset.changes.find((c) => c.type === "delete-volume")).toBeUndefined();
+    expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();
   });
 
-  test("detects volume name change (delete + create)", () => {
+  test("detects volume name change (update in place)", () => {
     const desired = makeState({
       services: {
         web: {
@@ -574,22 +572,19 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    );
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    });
 
-    const volDel = changeset.changes.find((c) => c.type === "delete-volume");
-    expect(volDel).toBeDefined();
-    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
-    expect(volCreate).toBeDefined();
-    if (volCreate?.type === "create-volume") {
-      expect(volCreate.name).toBe("new-vol");
+    const volUpdate = changeset.changes.find((c) => c.type === "update-volume");
+    expect(volUpdate).toBeDefined();
+    if (volUpdate?.type === "update-volume") {
+      expect(volUpdate.name).toBe("new-vol");
+      expect(volUpdate.volumeId).toBe("vol-1");
     }
+    expect(changeset.changes.find((c) => c.type === "delete-volume")).toBeUndefined();
+    expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();
   });
 
   test("no volume change when volume matches", () => {
@@ -616,14 +611,10 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    );
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    });
 
     const volChanges = changeset.changes.filter(
       (c) => c.type === "delete-volume" || c.type === "create-volume",
@@ -654,7 +645,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
 
     const volCreate = changeset.changes.find((c) => c.type === "create-volume");
     expect(volCreate).toBeDefined();
@@ -688,7 +679,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -697,7 +688,12 @@ describe("computeChangeset", () => {
   });
 
   test("removing restartPolicy from config skips diff but warns", () => {
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const warnings: string[] = [];
+    logger.mockTypes((type) =>
+      type === "warn"
+        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
+        : () => {},
+    );
     const desired = makeState({
       services: {
         web: {
@@ -720,16 +716,20 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy"));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ALWAYS"));
-    warnSpy.mockRestore();
+    expect(warnings.some((w) => w.includes("restart_policy") && w.includes("ALWAYS"))).toBe(true);
+    logger.restoreAll();
   });
 
   test("removing restartPolicyMaxRetries from config skips diff and warns (even when 0)", () => {
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const warnings: string[] = [];
+    logger.mockTypes((type) =>
+      type === "warn"
+        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
+        : () => {},
+    );
     const desired = makeState({
       services: {
         web: {
@@ -752,11 +752,11 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy_max_retries"));
-    warnSpy.mockRestore();
+    expect(warnings.some((w) => w.includes("restart_policy_max_retries"))).toBe(true);
+    logger.restoreAll();
   });
 
   test("removing source from config generates null clear", () => {
@@ -782,7 +782,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -813,7 +813,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -844,7 +844,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -875,7 +875,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -905,7 +905,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -933,7 +933,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -965,7 +965,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -993,7 +993,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1017,7 +1017,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-service");
     expect(create).toBeDefined();
 
@@ -1057,7 +1057,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1094,7 +1094,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1126,7 +1126,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1158,7 +1158,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1190,7 +1190,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1222,7 +1222,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1231,7 +1231,12 @@ describe("computeChangeset", () => {
   });
 
   test("removing nullable fields clears them, non-nullable fields are skipped with warning", () => {
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const warnings: string[] = [];
+    logger.mockTypes((type) =>
+      type === "warn"
+        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
+        : () => {},
+    );
     const desired = makeState({
       services: {
         web: {
@@ -1258,7 +1263,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1271,9 +1276,9 @@ describe("computeChangeset", () => {
       expect(update.settings.ipv6EgressEnabled).toBeNull();
     }
     // Warnings should fire for non-nullable fields
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("builder"));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("watch_patterns"));
-    warnSpy.mockRestore();
+    expect(warnings.some((w) => w.includes("builder"))).toBe(true);
+    expect(warnings.some((w) => w.includes("watch_patterns"))).toBe(true);
+    logger.restoreAll();
   });
 
   // --- Group 2: Branch ---
@@ -1292,7 +1297,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-service");
     expect(create).toBeDefined();
     if (create?.type === "create-service") {
@@ -1327,7 +1332,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
     expect(trigger).toBeDefined();
     if (trigger?.type === "update-deployment-trigger") {
@@ -1364,7 +1369,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
     expect(trigger).toBeUndefined();
   });
@@ -1385,7 +1390,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-service");
     expect(create).toBeDefined();
     if (create?.type === "create-service") {
@@ -1424,7 +1429,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -1456,7 +1461,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     expect(changeset.changes).toEqual([]);
   });
 
@@ -1484,7 +1489,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const dom = changeset.changes.find((c) => c.type === "create-domain");
     expect(dom).toBeDefined();
     if (dom?.type === "create-domain") {
@@ -1493,7 +1498,7 @@ describe("computeChangeset", () => {
     }
   });
 
-  test("domain targetPort change generates delete + create", () => {
+  test("domain targetPort change generates update-domain", () => {
     const desired = makeState({
       services: {
         web: {
@@ -1516,22 +1521,18 @@ describe("computeChangeset", () => {
     });
 
     const changeset = computeChangeset(desired, current, {}, [], {
-      web: [{ id: "dom-1", domain: "app.example.com", targetPort: 8080 }],
+      domainMap: { web: [{ id: "dom-1", domain: "app.example.com", targetPort: 8080 }] },
     });
 
-    const del = changeset.changes.find((c) => c.type === "delete-domain");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-domain") {
-      expect(del.domain).toBe("app.example.com");
-      expect(del.domainId).toBe("dom-1");
+    const update = changeset.changes.find((c) => c.type === "update-domain");
+    expect(update).toBeDefined();
+    if (update?.type === "update-domain") {
+      expect(update.domain).toBe("app.example.com");
+      expect(update.domainId).toBe("dom-1");
+      expect(update.targetPort).toBe(9090);
     }
-
-    const create = changeset.changes.find((c) => c.type === "create-domain");
-    expect(create).toBeDefined();
-    if (create?.type === "create-domain") {
-      expect(create.domain).toBe("app.example.com");
-      expect(create.targetPort).toBe(9090);
-    }
+    expect(changeset.changes.find((c) => c.type === "delete-domain")).toBeUndefined();
+    expect(changeset.changes.find((c) => c.type === "create-domain")).toBeUndefined();
   });
 
   test("railway domain: desired has railway_domain, current doesn't → create-service-domain", () => {
@@ -1557,16 +1558,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      undefined,
-      undefined,
-      undefined,
-    );
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const create = changeset.changes.find((c) => c.type === "create-service-domain");
     expect(create).toBeDefined();
     if (create?.type === "create-service-domain") {
@@ -1598,16 +1590,10 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      undefined,
-      { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
-      undefined,
-    );
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      serviceDomainMap: { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
+    });
     const del = changeset.changes.find((c) => c.type === "delete-service-domain");
     expect(del).toBeDefined();
     if (del?.type === "delete-service-domain") {
@@ -1640,16 +1626,10 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(
-      desired,
-      current,
-      {},
-      [],
-      {},
-      undefined,
-      { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
-      undefined,
-    );
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      serviceDomainMap: { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
+    });
     const serviceDomainChanges = changeset.changes.filter(
       (c) => c.type === "create-service-domain" || c.type === "delete-service-domain",
     );
@@ -1681,7 +1661,10 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {});
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      tcpProxyMap: {},
+    });
     const creates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
     expect(creates.length).toBe(2);
     const ports = creates.map((c) => (c as { applicationPort: number }).applicationPort).sort();
@@ -1711,11 +1694,14 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {
-      web: [
-        { id: "tcp-1", applicationPort: 5432 },
-        { id: "tcp-2", applicationPort: 6379 },
-      ],
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      tcpProxyMap: {
+        web: [
+          { id: "tcp-1", applicationPort: 5432 },
+          { id: "tcp-2", applicationPort: 6379 },
+        ],
+      },
     });
     const deletes = changeset.changes.filter((c) => c.type === "delete-tcp-proxy");
     expect(deletes.length).toBe(2);
@@ -1747,11 +1733,14 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, undefined, {
-      web: [
-        { id: "tcp-1", applicationPort: 5432 },
-        { id: "tcp-2", applicationPort: 6379 },
-      ],
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      tcpProxyMap: {
+        web: [
+          { id: "tcp-1", applicationPort: 5432 },
+          { id: "tcp-2", applicationPort: 6379 },
+        ],
+      },
     });
 
     // 8080 should be created
@@ -1795,7 +1784,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-limits");
     expect(update).toBeDefined();
     if (update?.type === "update-service-limits") {
@@ -1828,7 +1817,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const limitsChanges = changeset.changes.filter((c) => c.type === "update-service-limits");
     expect(limitsChanges).toEqual([]);
   });
@@ -1856,7 +1845,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-limits");
     expect(update).toBeDefined();
     if (update?.type === "update-service-limits") {
@@ -1891,7 +1880,7 @@ describe("computeChangeset", () => {
     });
     const current = makeState();
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
 
     // create-service with branch and registryCredentials
     const create = changeset.changes.find((c) => c.type === "create-service");
@@ -1974,12 +1963,12 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const triggerChanges = changeset.changes.filter((c) => c.type === "update-deployment-trigger");
     expect(triggerChanges).toHaveLength(0);
   });
 
-  test("service domain targetPort change generates delete + create", () => {
+  test("service domain targetPort change generates update-service-domain", () => {
     const desired = makeState({
       services: {
         web: {
@@ -2003,17 +1992,20 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {}, undefined, {
-      web: { id: "svcdom-1", domain: "web.up.railway.app" },
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      serviceDomainMap: { web: { id: "svcdom-1", domain: "web.up.railway.app" } },
     });
 
-    const del = changeset.changes.find((c) => c.type === "delete-service-domain");
-    expect(del).toBeDefined();
-    const create = changeset.changes.find((c) => c.type === "create-service-domain");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service-domain") {
-      expect(create.targetPort).toBe(8080);
+    const update = changeset.changes.find((c) => c.type === "update-service-domain");
+    expect(update).toBeDefined();
+    if (update?.type === "update-service-domain") {
+      expect(update.targetPort).toBe(8080);
+      expect(update.domainId).toBe("svcdom-1");
+      expect(update.domain).toBe("web.up.railway.app");
     }
+    expect(changeset.changes.find((c) => c.type === "delete-service-domain")).toBeUndefined();
+    expect(changeset.changes.find((c) => c.type === "create-service-domain")).toBeUndefined();
   });
 
   test("disable-static-ips when current has it but desired doesn't", () => {
@@ -2040,7 +2032,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const disable = changeset.changes.find((c) => c.type === "disable-static-ips");
     expect(disable).toBeDefined();
   });
@@ -2068,7 +2060,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const enable = changeset.changes.find((c) => c.type === "enable-static-ips");
     expect(enable).toBeDefined();
   });
@@ -2097,7 +2089,7 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
@@ -2128,155 +2120,11 @@ describe("computeChangeset", () => {
       },
     });
 
-    const changeset = computeChangeset(desired, current, {}, [], {});
+    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
       expect(update.settings.railwayConfigFile).toBe("railway.toml");
     }
-  });
-
-  test("metal: true generates enable-service-feature-flag for existing service", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: true,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {});
-    const flagChange = changeset.changes.find((c) => c.type === "enable-service-feature-flag");
-    expect(flagChange).toBeDefined();
-    if (flagChange?.type === "enable-service-feature-flag") {
-      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
-      expect(flagChange.serviceName).toBe("web");
-      expect(flagChange.serviceId).toBe("svc-1");
-    }
-  });
-
-  test("metal: false generates disable-service-feature-flag", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: false,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: true,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {});
-    const flagChange = changeset.changes.find((c) => c.type === "disable-service-feature-flag");
-    expect(flagChange).toBeDefined();
-    if (flagChange?.type === "disable-service-feature-flag") {
-      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
-      expect(flagChange.serviceName).toBe("web");
-      expect(flagChange.serviceId).toBe("svc-1");
-    }
-  });
-
-  test("metal: undefined does not generate change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: true,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {});
-    const flagChange = changeset.changes.find(
-      (c) => c.type === "enable-service-feature-flag" || c.type === "disable-service-feature-flag",
-    );
-    expect(flagChange).toBeUndefined();
-  });
-
-  test("new service with metal: true generates enable-service-feature-flag", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: true,
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], {});
-    const flagChange = changeset.changes.find((c) => c.type === "enable-service-feature-flag");
-    expect(flagChange).toBeDefined();
-    if (flagChange?.type === "enable-service-feature-flag") {
-      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
-      expect(flagChange.serviceName).toBe("web");
-    }
-  });
-
-  test("new service with metal: false does not generate feature flag change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-          metal: false,
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], {});
-    const flagChanges = changeset.changes.filter(
-      (c) => c.type === "enable-service-feature-flag" || c.type === "disable-service-feature-flag",
-    );
-    expect(flagChanges).toHaveLength(0);
   });
 });
