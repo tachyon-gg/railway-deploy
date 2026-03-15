@@ -38,7 +38,6 @@ interface ApplyOptions {
   noColor?: boolean;
 }
 
-
 // ANSI color helpers (used in apply output)
 function green(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[32m${text}\x1b[0m`;
@@ -46,7 +45,6 @@ function green(text: string, noColor: boolean): string {
 function red(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[31m${text}\x1b[0m`;
 }
-
 
 /**
  * Execute a changeset against Railway, applying each change sequentially
