@@ -1,9 +1,7 @@
 import { z } from "zod/v4";
 
-/** Returns true if the string contains a %{param} placeholder that will be expanded later */
-function hasParamPlaceholder(s: string): boolean {
-  return s.includes("%{");
-}
+// --- Structural schemas (validate shape before param expansion) ---
+// These accept strings that may contain %{param} or ${ENV_VAR} placeholders.
 
 const SourceConfigSchema = z
   .object({
@@ -15,9 +13,7 @@ const SourceConfigSchema = z
   });
 
 const VolumeConfigSchema = z.object({
-  mount: z.string().refine((m) => hasParamPlaceholder(m) || m.startsWith("/"), {
-    message: "volume mount must be an absolute path (start with /)",
-  }),
+  mount: z.string(),
   name: z.string().min(1),
 });
 
@@ -31,48 +27,12 @@ const RegionConfigSchema = z.object({
   num_replicas: z.number().int().positive().optional(),
 });
 
-const RestartPolicySchema = z
-  .string()
-  .refine((s) => hasParamPlaceholder(s) || ["ALWAYS", "NEVER", "ON_FAILURE"].includes(s), {
-    message: "restart_policy must be ALWAYS, NEVER, or ON_FAILURE",
-  });
-
-const BuilderSchema = z
-  .string()
-  .refine(
-    (s) =>
-      hasParamPlaceholder(s) ||
-      ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"].includes(s),
-    { message: "builder must be RAILPACK, DOCKERFILE, NIXPACKS, HEROKU, or PAKETO" },
-  );
-
 const RegistryCredentialsSchema = z.object({
   username: z.string(),
   password: z.string(),
 });
 
-/** Validates individual cron fields (minute, hour, day-of-month, month, day-of-week) */
-const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
-
-const CronScheduleSchema = z.string().refine(
-  (s) => {
-    if (hasParamPlaceholder(s)) return true;
-    const parts = s.trim().split(/\s+/);
-    if (parts.length !== 5) return false;
-    return parts.every((part) => CRON_FIELD_PATTERN.test(part));
-  },
-  { message: "cron_schedule must be a valid cron expression with 5 fields (e.g., '*/5 * * * *')" },
-);
-
-const DomainSchema = z.string().refine(
-  (d) => {
-    // Allow %{param} and ${VAR} templates, otherwise validate domain-like format
-    if (d.includes("%{") || d.includes("${")) return true;
-    // Allow wildcard subdomains (*.example.com) and regular domains
-    return /^(\*\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(d);
-  },
-  { message: "invalid domain format" },
-);
+const DomainSchema = z.string();
 
 const DomainEntrySchema = z.union([
   DomainSchema,
@@ -106,9 +66,9 @@ export const ServiceTemplateSchema = z
     variables: z.record(z.string(), z.string().nullable()).optional(),
     domains: z.array(DomainEntrySchema).optional(),
     region: RegionConfigSchema.optional(),
-    restart_policy: RestartPolicySchema.optional(),
+    restart_policy: z.string().optional(),
     healthcheck: HealthcheckConfigSchema.optional(),
-    cron_schedule: CronScheduleSchema.optional(),
+    cron_schedule: z.string().optional(),
     volume: VolumeConfigSchema.optional(),
     start_command: z.string().optional(),
     build_command: z.string().optional(),
@@ -117,7 +77,7 @@ export const ServiceTemplateSchema = z
     pre_deploy_command: z.union([z.string(), z.array(z.string())]).optional(),
     restart_policy_max_retries: z.number().int().nonnegative().optional(),
     sleep_application: z.boolean().optional(),
-    builder: BuilderSchema.optional(),
+    builder: z.string().optional(),
     watch_patterns: z.array(z.string()).optional(),
     draining_seconds: z.number().int().nonnegative().optional(),
     overlap_seconds: z.number().int().nonnegative().optional(),
@@ -142,9 +102,9 @@ const ServiceEntrySchema = z
     domains: z.array(DomainEntrySchema).optional(),
     volume: VolumeConfigSchema.optional(),
     region: RegionConfigSchema.optional(),
-    restart_policy: RestartPolicySchema.optional(),
+    restart_policy: z.string().optional(),
     healthcheck: HealthcheckConfigSchema.optional(),
-    cron_schedule: CronScheduleSchema.optional(),
+    cron_schedule: z.string().optional(),
     start_command: z.string().optional(),
     build_command: z.string().optional(),
     root_directory: z.string().optional(),
@@ -152,7 +112,7 @@ const ServiceEntrySchema = z
     pre_deploy_command: z.union([z.string(), z.array(z.string())]).optional(),
     restart_policy_max_retries: z.number().int().nonnegative().optional(),
     sleep_application: z.boolean().optional(),
-    builder: BuilderSchema.optional(),
+    builder: z.string().optional(),
     watch_patterns: z.array(z.string()).optional(),
     draining_seconds: z.number().int().nonnegative().optional(),
     overlap_seconds: z.number().int().nonnegative().optional(),
@@ -179,7 +139,7 @@ export const EnvironmentConfigSchema = z
   .strict();
 
 /**
- * Validate an environment config object against the schema.
+ * Validate an environment config object against the structural schema.
  * Throws a formatted error on validation failure.
  */
 export function validateEnvironmentConfig(data: unknown): void {
@@ -196,7 +156,7 @@ export function validateEnvironmentConfig(data: unknown): void {
 }
 
 /**
- * Validate a service template object against the schema.
+ * Validate a service template object against the structural schema.
  * Throws a formatted error on validation failure.
  */
 export function validateServiceTemplate(data: unknown, templatePath: string): void {
@@ -209,5 +169,66 @@ export function validateServiceTemplate(data: unknown, templatePath: string): vo
       })
       .join("\n");
     throw new Error(`Invalid service template (${templatePath}):\n${issues}`);
+  }
+}
+
+// --- Value validation (run after param expansion on resolved ServiceState) ---
+
+const VALID_RESTART_POLICIES = ["ALWAYS", "NEVER", "ON_FAILURE"];
+const VALID_BUILDERS = ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"];
+const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
+const DOMAIN_PATTERN = /^(\*\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+/**
+ * Validate resolved service values after param and env var expansion.
+ * Throws on invalid values with clear error messages.
+ */
+export function validateResolvedService(
+  name: string,
+  service: {
+    restartPolicy?: string;
+    builder?: string;
+    cronSchedule?: string;
+    volume?: { mount: string };
+    domains: Array<{ domain: string }>;
+  },
+): void {
+  const errors: string[] = [];
+
+  if (service.restartPolicy && !VALID_RESTART_POLICIES.includes(service.restartPolicy)) {
+    errors.push(
+      `restart_policy: "${service.restartPolicy}" is not valid (must be ${VALID_RESTART_POLICIES.join(", ")})`,
+    );
+  }
+
+  if (service.builder && !VALID_BUILDERS.includes(service.builder)) {
+    errors.push(
+      `builder: "${service.builder}" is not valid (must be ${VALID_BUILDERS.join(", ")})`,
+    );
+  }
+
+  if (service.cronSchedule) {
+    const parts = service.cronSchedule.trim().split(/\s+/);
+    if (parts.length !== 5 || !parts.every((p) => CRON_FIELD_PATTERN.test(p))) {
+      errors.push(
+        `cron_schedule: "${service.cronSchedule}" is not a valid cron expression (5 fields required)`,
+      );
+    }
+  }
+
+  if (service.volume && !service.volume.mount.startsWith("/")) {
+    errors.push(`volume.mount: "${service.volume.mount}" must be an absolute path (start with /)`);
+  }
+
+  for (const d of service.domains) {
+    // Skip validation for Railway references and env vars
+    if (d.domain.includes("${{") || d.domain.includes("${")) continue;
+    if (!DOMAIN_PATTERN.test(d.domain)) {
+      errors.push(`domain: "${d.domain}" is not a valid domain format`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid resolved config for service "${name}":\n  ${errors.join("\n  ")}`);
   }
 }
