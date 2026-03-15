@@ -725,6 +725,34 @@ describe("computeChangeset", () => {
     expect(update).toBeUndefined();
   });
 
+  test("removing restartPolicyMaxRetries from config skips diff (even when 0)", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          restartPolicyMaxRetries: 0,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeUndefined();
+  });
+
   test("removing source from config generates null clear", () => {
     const desired = makeState({
       services: {

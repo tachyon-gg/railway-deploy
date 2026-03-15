@@ -353,7 +353,10 @@ function diffServiceSettings(
     desired.restartPolicyMaxRetries !== current.restartPolicyMaxRetries
   ) {
     settings.restartPolicyMaxRetries = desired.restartPolicyMaxRetries;
-  } else if (desired.restartPolicyMaxRetries === undefined && current.restartPolicyMaxRetries) {
+  } else if (
+    desired.restartPolicyMaxRetries === undefined &&
+    current.restartPolicyMaxRetries !== undefined
+  ) {
     console.warn(
       `  Warning: "${desired.name}" has no restart_policy_max_retries in config — Railway will keep ${current.restartPolicyMaxRetries}`,
     );
