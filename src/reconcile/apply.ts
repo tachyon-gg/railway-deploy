@@ -87,8 +87,8 @@ function dim(text: string, noColor: boolean): string {
  *
  * Newly created service IDs are tracked so that subsequent changes (variables,
  * domains, settings) for the same service can resolve the ID. Variable upserts
- * use `skipDeploys` for all but the last variable change to avoid unnecessary
- * intermediate deployments.
+ * use `skipDeploys` per service — only each service's final variable upsert
+ * triggers a deploy, avoiding unnecessary intermediate deployments.
  *
  * @param client - Authenticated GraphQL client.
  * @param changeset - The changes to apply (from {@link computeChangeset}).
