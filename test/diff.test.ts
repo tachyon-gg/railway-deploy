@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { computeChangeset } from "../src/reconcile/diff.js";
 import type { State } from "../src/types/state.js";
 
@@ -697,6 +697,7 @@ describe("computeChangeset", () => {
   });
 
   test("removing restartPolicy from config skips diff but warns", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     const desired = makeState({
       services: {
         web: {
@@ -720,12 +721,15 @@ describe("computeChangeset", () => {
     });
 
     const changeset = computeChangeset(desired, current, {}, [], {});
-    // Non-nullable field — no change generated, Railway keeps current value
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ALWAYS"));
+    warnSpy.mockRestore();
   });
 
-  test("removing restartPolicyMaxRetries from config skips diff (even when 0)", () => {
+  test("removing restartPolicyMaxRetries from config skips diff and warns (even when 0)", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     const desired = makeState({
       services: {
         web: {
@@ -751,6 +755,8 @@ describe("computeChangeset", () => {
     const changeset = computeChangeset(desired, current, {}, [], {});
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy_max_retries"));
+    warnSpy.mockRestore();
   });
 
   test("removing source from config generates null clear", () => {
