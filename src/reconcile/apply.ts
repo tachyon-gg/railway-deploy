@@ -38,6 +38,31 @@ interface ApplyOptions {
   noColor?: boolean;
 }
 
+/** Extract a clean error message from GraphQL or network errors */
+function extractErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const msg = err.message;
+
+  // Try to parse structured GraphQL error response
+  try {
+    const parsed = "response" in err ? (err as { response: unknown }).response : undefined;
+    if (parsed && typeof parsed === "object" && parsed !== null) {
+      const resp = parsed as { errors?: Array<{ message: string }>; body?: string };
+      const gqlMessage = resp.errors?.[0]?.message;
+      if (gqlMessage && gqlMessage !== "Problem processing request") {
+        return gqlMessage;
+      }
+    }
+  } catch {
+    // Fall through to regex extraction
+  }
+
+  // Fallback: extract "message" from stringified error
+  const match = msg.match(/"message":"([^"]+)"/);
+  if (match) return match[1];
+  return msg;
+}
+
 // ANSI color helpers (used in apply output)
 function green(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[32m${text}\x1b[0m`;
@@ -98,7 +123,7 @@ export async function applyChangeset(
       applied.push(change);
       console.log(`  ${green("✓", noColor)} ${changeLabel(change)}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractErrorMessage(err);
       failed.push({ change, error: message });
       console.log(`  ${red("✗", noColor)} ${changeLabel(change)} — ${message}`);
     }

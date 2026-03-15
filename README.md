@@ -122,9 +122,9 @@ registry_credentials:              # For private container registries
 #### Build
 
 ```yaml
-builder: NIXPACKS                  # RAILPACK (default), DOCKERFILE, NIXPACKS, HEROKU, PAKETO
+builder: NIXPACKS                  # RAILPACK (default), NIXPACKS, HEROKU, PAKETO
 build_command: npm run build       # Custom build command
-dockerfile_path: Dockerfile.prod   # Path to Dockerfile (when builder is DOCKERFILE)
+dockerfile_path: Dockerfile.prod   # Path to Dockerfile (uses Railpack with Dockerfile)
 root_directory: /packages/api      # Root directory (monorepo support)
 watch_patterns:                    # File patterns that trigger deploys
   - /packages/api/src/**

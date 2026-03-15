@@ -11,13 +11,15 @@ export function createClient(token: string): GraphQLClient {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-    signal: AbortSignal.timeout(30_000),
   });
 
-  // Wrap the request method with retry logic
+  // Wrap the request method with retry logic and a fresh per-request timeout
   const originalRequest = baseClient.request.bind(baseClient);
   baseClient.request = ((...args: Parameters<typeof originalRequest>) =>
-    withRetry(() => originalRequest(...args))) as typeof originalRequest;
+    withRetry(() => {
+      baseClient.requestConfig.signal = AbortSignal.timeout(120_000);
+      return originalRequest(...args);
+    })) as typeof originalRequest;
 
   return baseClient;
 }

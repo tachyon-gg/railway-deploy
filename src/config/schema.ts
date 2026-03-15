@@ -175,7 +175,7 @@ export function validateServiceTemplate(data: unknown, templatePath: string): vo
 // --- Value validation (run after param expansion on resolved ServiceState) ---
 
 const VALID_RESTART_POLICIES = ["ALWAYS", "NEVER", "ON_FAILURE"];
-const VALID_BUILDERS = ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"];
+const VALID_BUILDERS = ["RAILPACK", "NIXPACKS", "HEROKU", "PAKETO"];
 const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
 const DOMAIN_PATTERN = /^(\*\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
