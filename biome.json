@@ -21,6 +21,6 @@
     }
   },
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/src/generated", "!**/bun.lock"]
+    "includes": ["**", "!**/node_modules", "!**/src/generated", "!**/bun.lock", "!**/dist"]
   }
 }

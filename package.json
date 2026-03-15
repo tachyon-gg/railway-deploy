@@ -1,6 +1,6 @@
 {
   "name": "@tachyon-gg/railway-deploy",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "repository": {
     "type": "git",
@@ -29,7 +29,8 @@
     "test:all": "bun test --bail --timeout 30000 --env-file .env.test test/",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "prepare": "husky"
   },
   "dependencies": {
     "@graphql-typed-document-node/core": "^3.2.0",
@@ -48,6 +49,7 @@
     "@graphql-codegen/typescript": "^4.1.2",
     "@graphql-codegen/typescript-operations": "^4.4.0",
     "@types/bun": "latest",
+    "husky": "^9.1.7",
     "typescript": "^5.7.0"
   }
 }

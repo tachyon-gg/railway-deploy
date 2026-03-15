@@ -52,8 +52,8 @@ function red(text: string, noColor: boolean): string {
  *
  * Newly created service IDs are tracked so that subsequent changes (variables,
  * domains, settings) for the same service can resolve the ID. Variable upserts
- * use `skipDeploys` for all but the last variable change to avoid unnecessary
- * intermediate deployments.
+ * use `skipDeploys` per service — only each service's final variable upsert
+ * triggers a deploy, avoiding unnecessary intermediate deployments.
  *
  * @param client - Authenticated GraphQL client.
  * @param changeset - The changes to apply (from {@link computeChangeset}).
@@ -76,18 +76,22 @@ export async function applyChangeset(
   // Track newly created service IDs so subsequent changes can reference them
   const createdServiceIds = new Map<string, string>();
 
-  // Find indices of last variable change for skipDeploys optimization
-  const varChangeIndices = changeset.changes
-    .map((c, i) => (c.type === "upsert-variables" || c.type === "upsert-shared-variables" ? i : -1))
-    .filter((i) => i >= 0);
-  const lastVarChangeIdx =
-    varChangeIndices.length > 0 ? varChangeIndices[varChangeIndices.length - 1] : -1;
+  // Find the last variable change index per service for skipDeploys optimization.
+  // Only the final variable upsert for each service should trigger a deploy.
+  const lastVarChangeByService = new Map<string, number>();
+  for (let i = 0; i < changeset.changes.length; i++) {
+    const c = changeset.changes[i];
+    if (c.type === "upsert-variables") {
+      lastVarChangeByService.set(c.serviceName, i);
+    }
+  }
 
   for (let i = 0; i < changeset.changes.length; i++) {
     const change = changeset.changes[i];
-    const skipDeploys =
-      (change.type === "upsert-variables" || change.type === "upsert-shared-variables") &&
-      i < lastVarChangeIdx;
+    let skipDeploys = false;
+    if (change.type === "upsert-variables") {
+      skipDeploys = i < (lastVarChangeByService.get(change.serviceName) ?? -1);
+    }
 
     try {
       await applyChange(client, change, projectId, environmentId, createdServiceIds, skipDeploys);

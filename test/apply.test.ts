@@ -282,11 +282,64 @@ describe("applyChangeset", () => {
 
     expect(result.applied).toHaveLength(2);
 
-    // First (shared) should have skipDeploys=true since it's before the last var change
-    expect(inputOf(captured[0]).skipDeploys).toBe(true);
+    // Per-service tracking: shared is the only shared var change, so no skip
+    expect(inputOf(captured[0]).skipDeploys).toBeFalsy();
 
-    // Last var change should not have skipDeploys
+    // web's only var change, so no skip either
     expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
+  });
+
+  test("skipDeploys is per-service — different services don't skip each other", async () => {
+    const captured: MockCall[] = [];
+    const testClient = {
+      request: async (document: unknown, variables?: Record<string, unknown>) => {
+        captured.push({ document, variables: variables as MockCall["variables"] });
+        return {};
+      },
+    } as GraphQLClient;
+
+    const changes: Change[] = [
+      { type: "upsert-variables", serviceName: "a", serviceId: "svc-a", variables: { X: "1" } },
+      { type: "upsert-variables", serviceName: "b", serviceId: "svc-b", variables: { Y: "2" } },
+    ];
+
+    const result = await applyChangeset(testClient, makeChangeset(changes), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(2);
+    // Each is the only var change for its service — neither should skip
+    expect(inputOf(captured[0]).skipDeploys).toBeFalsy();
+    expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
+  });
+
+  test("skipDeploys per-service with interleaved changes", async () => {
+    const captured: MockCall[] = [];
+    const testClient = {
+      request: async (document: unknown, variables?: Record<string, unknown>) => {
+        captured.push({ document, variables: variables as MockCall["variables"] });
+        return {};
+      },
+    } as GraphQLClient;
+
+    // A's first change, then B's only change, then A's second (last) change
+    const changes: Change[] = [
+      { type: "upsert-variables", serviceName: "a", serviceId: "svc-a", variables: { X: "1" } },
+      { type: "upsert-variables", serviceName: "b", serviceId: "svc-b", variables: { Y: "2" } },
+      { type: "upsert-variables", serviceName: "a", serviceId: "svc-a", variables: { Z: "3" } },
+    ];
+
+    const result = await applyChangeset(testClient, makeChangeset(changes), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(3);
+    // A's first change should skip (not the last for service A)
+    expect(inputOf(captured[0]).skipDeploys).toBe(true);
+    // B's only change should NOT skip
+    expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
+    // A's last change should NOT skip
+    expect(inputOf(captured[2]).skipDeploys).toBeFalsy();
   });
 
   test("delete-bucket throws 'not supported' error", async () => {
