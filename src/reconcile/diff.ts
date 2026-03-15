@@ -153,6 +153,9 @@ export function computeChangeset(
 
       // Metal (VM runtime) for new service
       if (desiredSvc.metal) {
+        console.warn(
+          `  Warning: "${name}" metal flag is service-level — applies across all Railway environments`,
+        );
         changes.push({
           type: "enable-service-feature-flag",
           serviceName: name,
