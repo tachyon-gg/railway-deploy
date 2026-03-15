@@ -1050,4 +1050,73 @@ describe("applyChangeset", () => {
     expect(result.failed[0].error).toContain("No service ID");
     expect(result.failed[0].error).toContain("orphan-service");
   });
+
+  test("enable-service-feature-flag calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "enable-service-feature-flag",
+      serviceName: "web",
+      serviceId: "svc-1",
+      flag: "USE_VM_RUNTIME",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("disable-service-feature-flag calls mutation", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "disable-service-feature-flag",
+      serviceName: "web",
+      serviceId: "svc-1",
+      flag: "USE_VM_RUNTIME",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("enable-service-feature-flag without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "enable-service-feature-flag",
+      serviceName: "ghost",
+      serviceId: "",
+      flag: "USE_VM_RUNTIME",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(0);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("disable-service-feature-flag without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "disable-service-feature-flag",
+      serviceName: "ghost",
+      serviceId: "",
+      flag: "USE_VM_RUNTIME",
+    };
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
 });

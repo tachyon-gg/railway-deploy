@@ -1,6 +1,7 @@
 import type { GraphQLClient } from "graphql-request";
-import type { ServiceInstanceUpdateInput } from "../generated/graphql.js";
+import type { ActiveServiceFeatureFlag, ServiceInstanceUpdateInput } from "../generated/graphql.js";
 import {
+  addServiceFeatureFlag,
   clearEgressGateways,
   createBucket,
   createCustomDomain,
@@ -16,6 +17,7 @@ import {
   deleteTcpProxy,
   deleteVariable,
   deleteVolume,
+  removeServiceFeatureFlag,
   updateDeploymentTrigger,
   updateServiceInstance,
   updateServiceInstanceLimits,
@@ -372,6 +374,24 @@ async function applyChange(
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
       await clearEgressGateways(client, serviceId, environmentId);
+      break;
+    }
+
+    case "enable-service-feature-flag": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await addServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
+      break;
+    }
+
+    case "disable-service-feature-flag": {
+      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
+      if (!serviceId) {
+        throw new Error(`No service ID for "${change.serviceName}"`);
+      }
+      await removeServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
       break;
     }
 

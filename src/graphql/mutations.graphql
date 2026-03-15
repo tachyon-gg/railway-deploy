@@ -98,3 +98,11 @@ mutation EgressGatewayAssociationCreate($input: EgressGatewayCreateInput!) {
 mutation EgressGatewayAssociationsClear($input: EgressGatewayServiceTargetInput!) {
   egressGatewayAssociationsClear(input: $input)
 }
+
+mutation ServiceFeatureFlagAdd($input: ServiceFeatureFlagToggleInput!) {
+  serviceFeatureFlagAdd(input: $input)
+}
+
+mutation ServiceFeatureFlagRemove($input: ServiceFeatureFlagToggleInput!) {
+  serviceFeatureFlagRemove(input: $input)
+}

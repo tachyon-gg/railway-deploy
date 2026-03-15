@@ -160,6 +160,20 @@ export interface DisableStaticIps {
   serviceId: string;
 }
 
+export interface EnableServiceFeatureFlag {
+  type: "enable-service-feature-flag";
+  serviceName: string;
+  serviceId: string;
+  flag: string;
+}
+
+export interface DisableServiceFeatureFlag {
+  type: "disable-service-feature-flag";
+  serviceName: string;
+  serviceId: string;
+  flag: string;
+}
+
 export interface CreateBucket {
   type: "create-bucket";
   name: string;
@@ -192,6 +206,8 @@ export type Change =
   | UpdateServiceLimits
   | EnableStaticIps
   | DisableStaticIps
+  | EnableServiceFeatureFlag
+  | DisableServiceFeatureFlag
   | CreateBucket
   | DeleteBucket;
 

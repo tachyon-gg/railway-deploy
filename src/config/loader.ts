@@ -224,6 +224,7 @@ function resolveService(
     ? expandParamsDeep(template.railway_config_file, params)
     : entry.railway_config_file;
   const staticOutboundIps = template?.static_outbound_ips ?? entry.static_outbound_ips;
+  const metal = template?.metal ?? entry.metal;
 
   // Normalize domains from template and entry
   let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
@@ -328,6 +329,7 @@ function resolveService(
   }
   if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
   if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
+  if (metal !== undefined) service.metal = metal;
 
   // Validate resolved values (after param expansion)
   validateResolvedService(name, service);

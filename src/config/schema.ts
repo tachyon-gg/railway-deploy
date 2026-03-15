@@ -90,6 +90,7 @@ export const ServiceTemplateSchema = z
     limits: LimitsConfigSchema,
     railway_config_file: z.string().optional(),
     static_outbound_ips: z.boolean().optional(),
+    metal: z.boolean().optional(),
   })
   .strict();
 
@@ -125,6 +126,7 @@ const ServiceEntrySchema = z
     limits: LimitsConfigSchema,
     railway_config_file: z.string().optional(),
     static_outbound_ips: z.boolean().optional(),
+    metal: z.boolean().optional(),
   })
   .strict();
 

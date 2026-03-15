@@ -1,5 +1,6 @@
 import type { GraphQLClient } from "graphql-request";
 import type {
+  ActiveServiceFeatureFlag,
   DeploymentTriggerUpdateInput,
   ServiceCreateInput,
   ServiceInstanceUpdateInput,
@@ -15,6 +16,8 @@ import {
   ServiceDeleteDocument,
   ServiceDomainCreateDocument,
   ServiceDomainDeleteDocument,
+  ServiceFeatureFlagAddDocument,
+  ServiceFeatureFlagRemoveDocument,
   ServiceInstanceLimitsUpdateDocument,
   ServiceInstanceUpdateDocument,
   TcpProxyCreateDocument,
@@ -256,6 +259,26 @@ export async function clearEgressGateways(
 ) {
   await client.request(EgressGatewayAssociationsClearDocument, {
     input: { serviceId, environmentId },
+  });
+}
+
+export async function addServiceFeatureFlag(
+  client: GraphQLClient,
+  serviceId: string,
+  flag: ActiveServiceFeatureFlag,
+) {
+  await client.request(ServiceFeatureFlagAddDocument, {
+    input: { serviceId, flag },
+  });
+}
+
+export async function removeServiceFeatureFlag(
+  client: GraphQLClient,
+  serviceId: string,
+  flag: ActiveServiceFeatureFlag,
+) {
+  await client.request(ServiceFeatureFlagRemoveDocument, {
+    input: { serviceId, flag },
   });
 }
 

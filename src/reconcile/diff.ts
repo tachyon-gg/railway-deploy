@@ -151,6 +151,19 @@ export function computeChangeset(
         });
       }
 
+      // Metal (VM runtime) for new service
+      if (desiredSvc.metal) {
+        console.warn(
+          `  Warning: "${name}" metal flag is service-level — applies across all Railway environments`,
+        );
+        changes.push({
+          type: "enable-service-feature-flag",
+          serviceName: name,
+          serviceId: "", // Resolved at apply time
+          flag: "USE_VM_RUNTIME",
+        });
+      }
+
       if (Object.keys(newSvcSettings).length > 0) {
         changes.push({
           type: "update-service-settings",
@@ -197,6 +210,9 @@ export function computeChangeset(
 
       // Static outbound IPs diff
       diffStaticOutboundIps(name, desiredSvc, currentSvc, changes);
+
+      // Metal (VM runtime) diff
+      diffMetal(name, desiredSvc, currentSvc, changes);
     }
   }
 
@@ -647,6 +663,37 @@ function diffServiceLimits(
       serviceName,
       serviceId: current.id,
       limits,
+    });
+  }
+}
+
+function diffMetal(
+  serviceName: string,
+  desired: ServiceState,
+  current: ServiceState,
+  changes: Change[],
+): void {
+  if (!current.id) return;
+
+  if (desired.metal === true && !current.metal) {
+    console.warn(
+      `  Warning: "${serviceName}" metal flag is service-level — applies across all Railway environments`,
+    );
+    changes.push({
+      type: "enable-service-feature-flag",
+      serviceName,
+      serviceId: current.id,
+      flag: "USE_VM_RUNTIME",
+    });
+  } else if (desired.metal === false && current.metal) {
+    console.warn(
+      `  Warning: "${serviceName}" metal flag is service-level — applies across all Railway environments`,
+    );
+    changes.push({
+      type: "disable-service-feature-flag",
+      serviceName,
+      serviceId: current.id,
+      flag: "USE_VM_RUNTIME",
     });
   }
 }

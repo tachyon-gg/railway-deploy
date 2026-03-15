@@ -180,7 +180,8 @@ async function run(configPath: string, opts: CliOptions) {
         c.type === "delete-shared-variables" ||
         c.type === "delete-service-domain" ||
         c.type === "delete-tcp-proxy" ||
-        c.type === "disable-static-ips",
+        c.type === "disable-static-ips" ||
+        c.type === "disable-service-feature-flag",
     );
 
     if (hasDestructive && !opts.yes) {

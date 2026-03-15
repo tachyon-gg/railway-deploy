@@ -130,7 +130,10 @@ watch_patterns:                    # File patterns that trigger deploys
   - /packages/api/src/**
   - /packages/shared/**
 railway_config_file: railway.toml  # Path to railway.json/toml for config-as-code
+metal: true                        # Enable Railway Metal builds (service-level, see note below)
 ```
+
+**Note:** Some settings are **service-level** in Railway (applied globally, not per-environment): `metal`, service creation, and service deletion. If you manage multiple environments for the same project, these settings will affect all environments regardless of which YAML file sets them.
 
 #### Deploy
 
