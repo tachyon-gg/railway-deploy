@@ -24,7 +24,6 @@ const SENSITIVE_PATTERNS = [
   "KEY",
   "PRIVATE",
   "CREDENTIAL",
-  "AUTH",
   "JWT",
   "CERT",
   "SIGNING",
