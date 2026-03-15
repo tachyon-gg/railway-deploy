@@ -42,12 +42,23 @@ interface ApplyOptions {
 function extractErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   const msg = err.message;
-  // GraphQL errors contain JSON with a "message" field — extract it
+
+  // Try to parse structured GraphQL error response
+  try {
+    const parsed = "response" in err ? (err as { response: unknown }).response : undefined;
+    if (parsed && typeof parsed === "object" && parsed !== null) {
+      const resp = parsed as { errors?: Array<{ message: string }>; body?: string };
+      const gqlMessage = resp.errors?.[0]?.message;
+      if (gqlMessage && gqlMessage !== "Problem processing request") {
+        return gqlMessage;
+      }
+    }
+  } catch {
+    // Fall through to regex extraction
+  }
+
+  // Fallback: extract "message" from stringified error
   const match = msg.match(/"message":"([^"]+)"/);
-  if (match && match[1] !== "Problem processing request") return match[1];
-  // For generic "Problem processing request", include the input for debugging
-  const inputMatch = msg.match(/"input":(\{[^}]+\})/);
-  if (match && inputMatch) return `${match[1]} — input: ${inputMatch[1]}`;
   if (match) return match[1];
   return msg;
 }
