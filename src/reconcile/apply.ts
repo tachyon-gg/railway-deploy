@@ -38,12 +38,33 @@ interface ApplyOptions {
   noColor?: boolean;
 }
 
+/**
+ * Determine if a change will trigger a Railway redeploy.
+ */
+function willTriggerDeploy(change: Change, skipDeploys: boolean): boolean {
+  switch (change.type) {
+    case "create-service":
+    case "update-service-settings":
+    case "delete-variables":
+    case "delete-shared-variables":
+      return true;
+    case "upsert-variables":
+    case "upsert-shared-variables":
+      return !skipDeploys;
+    default:
+      return false;
+  }
+}
+
 // ANSI color helpers (used in apply output)
 function green(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[32m${text}\x1b[0m`;
 }
 function red(text: string, noColor: boolean): string {
   return noColor ? text : `\x1b[31m${text}\x1b[0m`;
+}
+function dim(text: string, noColor: boolean): string {
+  return noColor ? text : `\x1b[2m${text}\x1b[0m`;
 }
 
 /**
@@ -76,23 +97,34 @@ export async function applyChangeset(
   // Track newly created service IDs so subsequent changes can reference them
   const createdServiceIds = new Map<string, string>();
 
-  // Find indices of last variable change for skipDeploys optimization
-  const varChangeIndices = changeset.changes
-    .map((c, i) => (c.type === "upsert-variables" || c.type === "upsert-shared-variables" ? i : -1))
-    .filter((i) => i >= 0);
-  const lastVarChangeIdx =
-    varChangeIndices.length > 0 ? varChangeIndices[varChangeIndices.length - 1] : -1;
+  // Find the last variable change index per service for skipDeploys optimization.
+  // Only the final variable upsert for each service should trigger a deploy.
+  const lastVarChangeByService = new Map<string, number>();
+  for (let i = 0; i < changeset.changes.length; i++) {
+    const c = changeset.changes[i];
+    if (c.type === "upsert-variables") {
+      lastVarChangeByService.set(c.serviceName, i);
+    } else if (c.type === "upsert-shared-variables") {
+      lastVarChangeByService.set("__shared__", i);
+    }
+  }
 
   for (let i = 0; i < changeset.changes.length; i++) {
     const change = changeset.changes[i];
-    const skipDeploys =
-      (change.type === "upsert-variables" || change.type === "upsert-shared-variables") &&
-      i < lastVarChangeIdx;
+    let skipDeploys = false;
+    if (change.type === "upsert-variables") {
+      skipDeploys = i < (lastVarChangeByService.get(change.serviceName) ?? -1);
+    } else if (change.type === "upsert-shared-variables") {
+      skipDeploys = i < (lastVarChangeByService.get("__shared__") ?? -1);
+    }
 
     try {
       await applyChange(client, change, projectId, environmentId, createdServiceIds, skipDeploys);
       applied.push(change);
-      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}`);
+      const deployNote = willTriggerDeploy(change, skipDeploys)
+        ? dim(" (triggers deploy)", noColor)
+        : "";
+      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}${deployNote}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failed.push({ change, error: message });

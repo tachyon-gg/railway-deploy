@@ -282,10 +282,10 @@ describe("applyChangeset", () => {
 
     expect(result.applied).toHaveLength(2);
 
-    // First (shared) should have skipDeploys=true since it's before the last var change
-    expect(inputOf(captured[0]).skipDeploys).toBe(true);
+    // Per-service tracking: shared is the only shared var change, so no skip
+    expect(inputOf(captured[0]).skipDeploys).toBeFalsy();
 
-    // Last var change should not have skipDeploys
+    // web's only var change, so no skip either
     expect(inputOf(captured[1]).skipDeploys).toBeFalsy();
   });
 
