@@ -327,8 +327,9 @@ export function printChangeset(
 
   // Print per-service changes
   for (const [serviceName, entries] of serviceGroups) {
-    const actions = new Set(entries.map((e) => e.desc.action));
-    const headerAction: Action = actions.size === 1 ? [...actions][0] : "update";
+    const hasCreate = entries.some((e) => e.desc.action === "create" && e.desc.category === "Service");
+    const hasDelete = entries.some((e) => e.desc.action === "delete" && e.desc.category === "Service");
+    const headerAction: Action = hasCreate ? "create" : hasDelete ? "delete" : "update";
     const headerIcon = ACTION_ICON[headerAction](noColor);
     console.log(`  ${headerIcon} ${serviceName}:`);
     for (const { change, desc } of entries) {
