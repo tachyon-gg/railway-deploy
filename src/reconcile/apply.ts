@@ -1,5 +1,5 @@
 import type { GraphQLClient } from "graphql-request";
-import type { ServiceInstanceUpdateInput } from "../generated/graphql.js";
+import type { ActiveServiceFeatureFlag, ServiceInstanceUpdateInput } from "../generated/graphql.js";
 import {
   addServiceFeatureFlag,
   clearEgressGateways,
@@ -382,7 +382,7 @@ async function applyChange(
       if (!serviceId) {
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
-      await addServiceFeatureFlag(client, serviceId, change.flag);
+      await addServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
       break;
     }
 
@@ -391,7 +391,7 @@ async function applyChange(
       if (!serviceId) {
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
-      await removeServiceFeatureFlag(client, serviceId, change.flag);
+      await removeServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
       break;
     }
 

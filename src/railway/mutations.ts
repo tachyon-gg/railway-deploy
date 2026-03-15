@@ -262,24 +262,23 @@ export async function clearEgressGateways(
   });
 }
 
-// flag must be a valid ActiveServiceFeatureFlag value (e.g., "USE_VM_RUNTIME")
 export async function addServiceFeatureFlag(
   client: GraphQLClient,
   serviceId: string,
-  flag: string,
+  flag: ActiveServiceFeatureFlag,
 ) {
   await client.request(ServiceFeatureFlagAddDocument, {
-    input: { serviceId, flag: flag as ActiveServiceFeatureFlag },
+    input: { serviceId, flag },
   });
 }
 
 export async function removeServiceFeatureFlag(
   client: GraphQLClient,
   serviceId: string,
-  flag: string,
+  flag: ActiveServiceFeatureFlag,
 ) {
   await client.request(ServiceFeatureFlagRemoveDocument, {
-    input: { serviceId, flag: flag as ActiveServiceFeatureFlag },
+    input: { serviceId, flag },
   });
 }
 
