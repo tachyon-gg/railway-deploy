@@ -323,6 +323,21 @@ services:
 `,
   );
 
+  // Write an environment file with metal: true
+  writeFileSync(
+    join(ENVS_DIR, "metal.yaml"),
+    `
+project: Test Project
+environment: alpha
+
+services:
+  web:
+    source:
+      image: nginx:latest
+    metal: true
+`,
+  );
+
   // Write a template with an invalid/unknown field
   writeFileSync(
     join(SERVICES_DIR, "invalid-field.yaml"),
@@ -881,5 +896,12 @@ services:
     expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-policy-param.yaml"))).toThrow(
       "restart_policy",
     );
+  });
+
+  test("loads metal from config", () => {
+    const result = loadEnvironmentConfig(join(ENVS_DIR, "metal.yaml"));
+    const web = result.state.services.web;
+
+    expect(web.metal).toBe(true);
   });
 });

@@ -130,6 +130,7 @@ watch_patterns:                    # File patterns that trigger deploys
   - /packages/api/src/**
   - /packages/shared/**
 railway_config_file: railway.toml  # Path to railway.json/toml for config-as-code
+metal: true                        # Enable Railway Metal (VM runtime) builds
 ```
 
 #### Deploy

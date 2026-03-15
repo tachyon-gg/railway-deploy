@@ -173,6 +173,24 @@ describe("changeLabel", () => {
         mustContain: ["my-bucket"],
       },
       { change: { type: "delete-bucket", name: "old", bucketId: "b1" }, mustContain: ["old"] },
+      {
+        change: {
+          type: "enable-service-feature-flag",
+          serviceName: "web",
+          serviceId: "svc-1",
+          flag: "USE_VM_RUNTIME",
+        },
+        mustContain: ["web", "metal", "enable"],
+      },
+      {
+        change: {
+          type: "disable-service-feature-flag",
+          serviceName: "web",
+          serviceId: "svc-1",
+          flag: "USE_VM_RUNTIME",
+        },
+        mustContain: ["web", "metal", "disable"],
+      },
     ];
 
     for (const { change, mustContain } of changes) {

@@ -286,6 +286,11 @@ export async function fetchCurrentState(
       services[svc.name].staticOutboundIps = true;
     }
 
+    // Populate metal (VM runtime) flag
+    if (svc.featureFlags.includes("USE_VM_RUNTIME")) {
+      services[svc.name].metal = true;
+    }
+
     if (vol) {
       volumeMap[svc.name] = vol;
     }

@@ -2135,4 +2135,127 @@ describe("computeChangeset", () => {
       expect(update.settings.railwayConfigFile).toBe("railway.toml");
     }
   });
+
+  test("metal: true generates enable-service-feature-flag for existing service", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: true,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const flagChange = changeset.changes.find((c) => c.type === "enable-service-feature-flag");
+    expect(flagChange).toBeDefined();
+    if (flagChange?.type === "enable-service-feature-flag") {
+      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
+      expect(flagChange.serviceName).toBe("web");
+      expect(flagChange.serviceId).toBe("svc-1");
+    }
+  });
+
+  test("metal: false generates disable-service-feature-flag", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: false,
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: true,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const flagChange = changeset.changes.find((c) => c.type === "disable-service-feature-flag");
+    expect(flagChange).toBeDefined();
+    if (flagChange?.type === "disable-service-feature-flag") {
+      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
+      expect(flagChange.serviceName).toBe("web");
+      expect(flagChange.serviceId).toBe("svc-1");
+    }
+  });
+
+  test("metal: undefined does not generate change", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: true,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const flagChange = changeset.changes.find(
+      (c) => c.type === "enable-service-feature-flag" || c.type === "disable-service-feature-flag",
+    );
+    expect(flagChange).toBeUndefined();
+  });
+
+  test("new service with metal: true generates enable-service-feature-flag", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          source: { image: "nginx:latest" },
+          variables: {},
+          domains: [],
+          metal: true,
+        },
+      },
+    });
+    const current = makeState();
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const flagChange = changeset.changes.find((c) => c.type === "enable-service-feature-flag");
+    expect(flagChange).toBeDefined();
+    if (flagChange?.type === "enable-service-feature-flag") {
+      expect(flagChange.flag).toBe("USE_VM_RUNTIME");
+      expect(flagChange.serviceName).toBe("web");
+    }
+  });
 });

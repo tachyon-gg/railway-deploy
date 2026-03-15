@@ -54,6 +54,8 @@ export interface ServiceState {
   railwayConfigFile?: string;
   /** Static outbound IPs enabled */
   staticOutboundIps?: boolean;
+  /** Railway Metal (VM runtime) enabled */
+  metal?: boolean;
   /** Railway service ID — present only in current state from Railway */
   id?: string;
 }

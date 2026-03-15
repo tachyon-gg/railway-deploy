@@ -221,6 +221,25 @@ function describeChange(change: Change): ChangeDescription {
         summary: "static outbound IPs: disable",
       };
 
+    case "enable-service-feature-flag": {
+      const flagName = change.flag === "USE_VM_RUNTIME" ? "metal" : change.flag;
+      return {
+        category: "Feature flags",
+        action: "create",
+        serviceName: change.serviceName,
+        summary: `${flagName}: enable`,
+      };
+    }
+    case "disable-service-feature-flag": {
+      const flagName = change.flag === "USE_VM_RUNTIME" ? "metal" : change.flag;
+      return {
+        category: "Feature flags",
+        action: "delete",
+        serviceName: change.serviceName,
+        summary: `${flagName}: disable`,
+      };
+    }
+
     case "create-bucket":
       return {
         category: "Buckets",

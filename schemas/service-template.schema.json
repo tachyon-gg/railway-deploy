@@ -232,6 +232,10 @@
     "static_outbound_ips": {
       "type": "boolean",
       "description": "Enable static outbound IPs (egress gateways) for the service."
+    },
+    "metal": {
+      "type": "boolean",
+      "description": "Enable Railway Metal (VM runtime) builds for the service."
     }
   }
 }

@@ -81,6 +81,8 @@ export interface ServiceTemplate {
   railway_config_file?: string;
   /** Enable static outbound IPs */
   static_outbound_ips?: boolean;
+  /** Enable Railway Metal (VM runtime) builds */
+  metal?: boolean;
 }
 
 /** Service entry in an environment file */
@@ -145,6 +147,8 @@ export interface ServiceEntry {
   railway_config_file?: string;
   /** Enable static outbound IPs */
   static_outbound_ips?: boolean;
+  /** Enable Railway Metal (VM runtime) builds */
+  metal?: boolean;
 }
 
 /** Top-level environment file YAML structure (environments/*.yaml) */
