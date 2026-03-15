@@ -794,4 +794,48 @@ services:
     expect(svc.builder).toBe("NIXPACKS");
     expect(svc.volume?.mount).toBe("/data");
   });
+
+  test("throws on invalid builder after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-builder-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: INVALID_BUILDER
+      mount: /data
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-builder-param.yaml"))).toThrow(
+      "builder",
+    );
+  });
+
+  test("throws on invalid volume mount after param expansion", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-mount-param.yaml"),
+      `
+project: Test
+environment: alpha
+services:
+  web:
+    template: ../services/param-validated.yaml
+    params:
+      schedule: "*/5 * * * *"
+      policy: ON_FAILURE
+      build: NIXPACKS
+      mount: relative/path
+`,
+    );
+
+    expect(() => loadEnvironmentConfig(join(ENVS_DIR, "bad-mount-param.yaml"))).toThrow(
+      "volume.mount",
+    );
+  });
 });
