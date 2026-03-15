@@ -17,7 +17,7 @@ function dim(text: string, noColor: boolean): string {
 /** Patterns that indicate a variable value is sensitive */
 const SENSITIVE_PATTERNS = [
   "PASSWORD",
-  "PASS",
+  "PASSPHRASE",
   "SECRET",
   "TOKEN",
   "KEY",
@@ -28,8 +28,6 @@ const SENSITIVE_PATTERNS = [
   "CERT",
   "SIGNING",
   "ENCRYPTION",
-  "API_KEY",
-  "ACCESS_KEY",
 ];
 
 function isSensitive(key: string): boolean {
