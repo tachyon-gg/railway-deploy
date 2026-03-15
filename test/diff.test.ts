@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { computeChangeset } from "../src/reconcile/diff.js";
 import type { State } from "../src/types/state.js";
 
@@ -696,7 +696,8 @@ describe("computeChangeset", () => {
     }
   });
 
-  test("removing restartPolicy from config generates null clear", () => {
+  test("removing restartPolicy from config skips diff but warns", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     const desired = makeState({
       services: {
         web: {
@@ -721,10 +722,41 @@ describe("computeChangeset", () => {
 
     const changeset = computeChangeset(desired, current, {}, [], {});
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.restartPolicy).toBeNull();
-    }
+    expect(update).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ALWAYS"));
+    warnSpy.mockRestore();
+  });
+
+  test("removing restartPolicyMaxRetries from config skips diff and warns (even when 0)", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          restartPolicyMaxRetries: 0,
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {});
+    const update = changeset.changes.find((c) => c.type === "update-service-settings");
+    expect(update).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("restart_policy_max_retries"));
+    warnSpy.mockRestore();
   });
 
   test("removing source from config generates null clear", () => {
@@ -1198,7 +1230,8 @@ describe("computeChangeset", () => {
     }
   });
 
-  test("removing builder/watchPatterns/etc from config generates null clear", () => {
+  test("removing nullable fields clears them, non-nullable fields are skipped with warning", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     const desired = makeState({
       services: {
         web: {
@@ -1229,12 +1262,18 @@ describe("computeChangeset", () => {
     const update = changeset.changes.find((c) => c.type === "update-service-settings");
     expect(update).toBeDefined();
     if (update?.type === "update-service-settings") {
-      expect(update.settings.builder).toBeNull();
-      expect(update.settings.watchPatterns).toBeNull();
+      // Non-nullable fields (builder, watchPatterns) should NOT be in settings
+      expect(update.settings.builder).toBeUndefined();
+      expect(update.settings.watchPatterns).toBeUndefined();
+      // Nullable fields should be cleared
       expect(update.settings.drainingSeconds).toBeNull();
       expect(update.settings.overlapSeconds).toBeNull();
       expect(update.settings.ipv6EgressEnabled).toBeNull();
     }
+    // Warnings should fire for non-nullable fields
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("builder"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("watch_patterns"));
+    warnSpy.mockRestore();
   });
 
   // --- Group 2: Branch ---

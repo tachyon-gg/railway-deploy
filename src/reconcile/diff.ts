@@ -315,8 +315,13 @@ function diffServiceSettings(
   if (!deepEqual(desired.source, current.source)) {
     settings.source = desired.source ?? null;
   }
-  if (desired.restartPolicy !== current.restartPolicy) {
-    settings.restartPolicy = desired.restartPolicy ?? null;
+  // restartPolicyType is non-nullable on Railway — can't clear it
+  if (desired.restartPolicy !== undefined && desired.restartPolicy !== current.restartPolicy) {
+    settings.restartPolicy = desired.restartPolicy;
+  } else if (desired.restartPolicy === undefined && current.restartPolicy !== undefined) {
+    console.warn(
+      `  Warning: "${desired.name}" has no restart_policy in config — Railway will keep "${current.restartPolicy}"`,
+    );
   }
   if (!deepEqual(desired.healthcheck, current.healthcheck)) {
     settings.healthcheck = desired.healthcheck ?? null;
@@ -342,18 +347,42 @@ function diffServiceSettings(
   if (!deepEqual(desired.preDeployCommand, current.preDeployCommand)) {
     settings.preDeployCommand = desired.preDeployCommand ?? null;
   }
-  if (desired.restartPolicyMaxRetries !== current.restartPolicyMaxRetries) {
-    settings.restartPolicyMaxRetries = desired.restartPolicyMaxRetries ?? null;
+  // restartPolicyMaxRetries is non-nullable on Railway — can't clear it
+  if (
+    desired.restartPolicyMaxRetries !== undefined &&
+    desired.restartPolicyMaxRetries !== current.restartPolicyMaxRetries
+  ) {
+    settings.restartPolicyMaxRetries = desired.restartPolicyMaxRetries;
+  } else if (
+    desired.restartPolicyMaxRetries === undefined &&
+    current.restartPolicyMaxRetries !== undefined
+  ) {
+    console.warn(
+      `  Warning: "${desired.name}" has no restart_policy_max_retries in config — Railway will keep ${current.restartPolicyMaxRetries}`,
+    );
   }
   if (desired.sleepApplication !== current.sleepApplication) {
     settings.sleepApplication = desired.sleepApplication ?? null;
   }
   // Group 1 fields
-  if (desired.builder !== current.builder) {
-    settings.builder = desired.builder ?? null;
+  // builder is non-nullable on Railway — can't clear it
+  if (desired.builder !== undefined && desired.builder !== current.builder) {
+    settings.builder = desired.builder;
+  } else if (desired.builder === undefined && current.builder !== undefined) {
+    console.warn(
+      `  Warning: "${desired.name}" has no builder in config — Railway will keep "${current.builder}"`,
+    );
   }
-  if (!deepEqual(desired.watchPatterns, current.watchPatterns)) {
-    settings.watchPatterns = desired.watchPatterns ?? null;
+  // watchPatterns is non-nullable on Railway — can't clear it
+  if (
+    desired.watchPatterns !== undefined &&
+    !deepEqual(desired.watchPatterns, current.watchPatterns)
+  ) {
+    settings.watchPatterns = desired.watchPatterns;
+  } else if (desired.watchPatterns === undefined && current.watchPatterns !== undefined) {
+    console.warn(
+      `  Warning: "${desired.name}" has no watch_patterns in config — Railway will keep current patterns`,
+    );
   }
   if (desired.drainingSeconds !== current.drainingSeconds) {
     settings.drainingSeconds = desired.drainingSeconds ?? null;
