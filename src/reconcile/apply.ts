@@ -83,8 +83,6 @@ export async function applyChangeset(
     const c = changeset.changes[i];
     if (c.type === "upsert-variables") {
       lastVarChangeByService.set(c.serviceName, i);
-    } else if (c.type === "upsert-shared-variables") {
-      lastVarChangeByService.set("__shared__", i);
     }
   }
 
@@ -93,8 +91,6 @@ export async function applyChangeset(
     let skipDeploys = false;
     if (change.type === "upsert-variables") {
       skipDeploys = i < (lastVarChangeByService.get(change.serviceName) ?? -1);
-    } else if (change.type === "upsert-shared-variables") {
-      skipDeploys = i < (lastVarChangeByService.get("__shared__") ?? -1);
     }
 
     try {
