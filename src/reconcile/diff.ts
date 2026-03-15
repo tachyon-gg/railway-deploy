@@ -318,7 +318,7 @@ function diffServiceSettings(
   // restartPolicyType is non-nullable on Railway — can't clear it
   if (desired.restartPolicy !== undefined && desired.restartPolicy !== current.restartPolicy) {
     settings.restartPolicy = desired.restartPolicy;
-  } else if (desired.restartPolicy === undefined && current.restartPolicy) {
+  } else if (desired.restartPolicy === undefined && current.restartPolicy !== undefined) {
     console.warn(
       `  Warning: "${desired.name}" has no restart_policy in config — Railway will keep "${current.restartPolicy}"`,
     );
@@ -368,7 +368,7 @@ function diffServiceSettings(
   // builder is non-nullable on Railway — can't clear it
   if (desired.builder !== undefined && desired.builder !== current.builder) {
     settings.builder = desired.builder;
-  } else if (desired.builder === undefined && current.builder) {
+  } else if (desired.builder === undefined && current.builder !== undefined) {
     console.warn(
       `  Warning: "${desired.name}" has no builder in config — Railway will keep "${current.builder}"`,
     );
@@ -379,7 +379,7 @@ function diffServiceSettings(
     !deepEqual(desired.watchPatterns, current.watchPatterns)
   ) {
     settings.watchPatterns = desired.watchPatterns;
-  } else if (desired.watchPatterns === undefined && current.watchPatterns?.length) {
+  } else if (desired.watchPatterns === undefined && current.watchPatterns !== undefined) {
     console.warn(
       `  Warning: "${desired.name}" has no watch_patterns in config — Railway will keep current patterns`,
     );

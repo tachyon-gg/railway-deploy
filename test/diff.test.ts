@@ -1231,6 +1231,7 @@ describe("computeChangeset", () => {
   });
 
   test("removing nullable fields clears them, non-nullable fields are skipped with warning", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     const desired = makeState({
       services: {
         web: {
@@ -1269,6 +1270,10 @@ describe("computeChangeset", () => {
       expect(update.settings.overlapSeconds).toBeNull();
       expect(update.settings.ipv6EgressEnabled).toBeNull();
     }
+    // Warnings should fire for non-nullable fields
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("builder"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("watch_patterns"));
+    warnSpy.mockRestore();
   });
 
   // --- Group 2: Branch ---
