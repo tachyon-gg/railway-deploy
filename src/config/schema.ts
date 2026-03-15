@@ -1,5 +1,10 @@
 import { z } from "zod/v4";
 
+/** Returns true if the string contains a %{param} placeholder that will be expanded later */
+function hasParamPlaceholder(s: string): boolean {
+  return s.includes("%{");
+}
+
 const SourceConfigSchema = z
   .object({
     image: z.string().optional(),
@@ -10,7 +15,7 @@ const SourceConfigSchema = z
   });
 
 const VolumeConfigSchema = z.object({
-  mount: z.string().refine((m) => m.startsWith("/"), {
+  mount: z.string().refine((m) => hasParamPlaceholder(m) || m.startsWith("/"), {
     message: "volume mount must be an absolute path (start with /)",
   }),
   name: z.string().min(1),
@@ -26,9 +31,20 @@ const RegionConfigSchema = z.object({
   num_replicas: z.number().int().positive().optional(),
 });
 
-const RestartPolicySchema = z.enum(["ALWAYS", "NEVER", "ON_FAILURE"]);
+const RestartPolicySchema = z
+  .string()
+  .refine((s) => hasParamPlaceholder(s) || ["ALWAYS", "NEVER", "ON_FAILURE"].includes(s), {
+    message: "restart_policy must be ALWAYS, NEVER, or ON_FAILURE",
+  });
 
-const BuilderSchema = z.enum(["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"]);
+const BuilderSchema = z
+  .string()
+  .refine(
+    (s) =>
+      hasParamPlaceholder(s) ||
+      ["RAILPACK", "DOCKERFILE", "NIXPACKS", "HEROKU", "PAKETO"].includes(s),
+    { message: "builder must be RAILPACK, DOCKERFILE, NIXPACKS, HEROKU, or PAKETO" },
+  );
 
 const RegistryCredentialsSchema = z.object({
   username: z.string(),
@@ -40,6 +56,7 @@ const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)
 
 const CronScheduleSchema = z.string().refine(
   (s) => {
+    if (hasParamPlaceholder(s)) return true;
     const parts = s.trim().split(/\s+/);
     if (parts.length !== 5) return false;
     return parts.every((part) => CRON_FIELD_PATTERN.test(part));
