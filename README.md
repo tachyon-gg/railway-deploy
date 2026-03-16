@@ -63,11 +63,13 @@ environments:                # Environments to manage
   - production
 
 shared_variables:            # Variables shared across all services
-  APP_PORT: "8080"           # Default for all environments
-  alpha:                     # Per-environment overrides
-    API_KEY: ${ALPHA_API_KEY}
-  production:
-    API_KEY: ${PROD_API_KEY}
+  defaults:
+    APP_PORT: "8080"         # Default for all environments
+  environments:              # Per-environment overrides
+    alpha:
+      API_KEY: ${ALPHA_API_KEY}
+    production:
+      API_KEY: ${PROD_API_KEY}
 
 services:                    # Map of service name -> config
   web: { ... }
@@ -80,18 +82,18 @@ buckets:                     # S3-compatible buckets (project-level)
 
 ### Shared variables
 
-Shared variables are per-environment in Railway. In the config, top-level string keys are defaults applied to all environments. Keys matching a declared environment name are override blocks that add or replace defaults for that environment.
+Shared variables are per-environment in Railway. In the config, `defaults` apply to all environments and `environments` provides per-environment overrides that add or replace defaults.
 
 ```yaml
 shared_variables:
-  # Defaults — applied to all environments
-  ADMIN_PORT: "8081"
-  PUBLIC_PORT: "8080"
-  # Overrides — per-environment
-  alpha:
-    JWT_SECRET: ${JWT_SECRET_ALPHA}
-  production:
-    JWT_SECRET: ${JWT_SECRET_PROD}
+  defaults:
+    ADMIN_PORT: "8081"
+    PUBLIC_PORT: "8080"
+  environments:
+    alpha:
+      JWT_SECRET: ${JWT_SECRET_ALPHA}
+    production:
+      JWT_SECRET: ${JWT_SECRET_PROD}
 ```
 
 ### Service configuration
@@ -346,11 +348,13 @@ environments:
   - production
 
 shared_variables:
-  APP_PORT: "3000"
-  staging:
-    SENTRY_DSN: ${SENTRY_DSN_STAGING}
-  production:
-    SENTRY_DSN: ${SENTRY_DSN_PROD}
+  defaults:
+    APP_PORT: "3000"
+  environments:
+    staging:
+      SENTRY_DSN: ${SENTRY_DSN_STAGING}
+    production:
+      SENTRY_DSN: ${SENTRY_DSN_PROD}
 
 services:
   web:

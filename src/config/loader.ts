@@ -94,42 +94,21 @@ export function mergeServiceEntry(
 /**
  * Resolve shared variables for a target environment.
  *
- * Top-level string keys in shared_variables are defaults.
- * Keys matching a declared environment name are override objects.
- * Returns merged defaults + overrides for the target environment.
+ * Merges `defaults` with the target environment's overrides from `environments`.
  */
 function resolveSharedVariables(
-  sharedVars: Record<string, string | null | Record<string, string | null>> | undefined,
+  sharedVars:
+    | {
+        defaults?: Record<string, string | null>;
+        environments?: Record<string, Record<string, string | null>>;
+      }
+    | undefined,
   targetEnvironment: string,
-  declaredEnvironments: string[],
 ): Record<string, string | null> {
   if (!sharedVars) return {};
 
-  const envSet = new Set(declaredEnvironments);
-  const defaults: Record<string, string | null> = {};
-  let overrides: Record<string, string | null> = {};
-
-  for (const [key, value] of Object.entries(sharedVars)) {
-    if (envSet.has(key)) {
-      // This is an environment override block
-      if (typeof value !== "object" || value === null) {
-        throw new Error(
-          `shared_variables key "${key}" matches a declared environment name but has a non-object value. Use a different variable name, or provide an object with per-environment overrides.`,
-        );
-      }
-      if (key === targetEnvironment) {
-        overrides = value as Record<string, string | null>;
-      }
-    } else {
-      // This is a default value — must be string or null, not an object
-      if (typeof value === "object" && value !== null) {
-        throw new Error(
-          `shared_variables key "${key}" has an object value but does not match any declared environment (${declaredEnvironments.join(", ")}). Object values are only allowed for environment override blocks.`,
-        );
-      }
-      defaults[key] = value as string | null;
-    }
-  }
+  const defaults = sharedVars.defaults ?? {};
+  const overrides = sharedVars.environments?.[targetEnvironment] ?? {};
 
   return { ...defaults, ...overrides };
 }
@@ -223,11 +202,7 @@ export function loadProjectConfig(
   }
 
   // Resolve shared variables for this environment
-  const mergedSharedVars = resolveSharedVariables(
-    config.shared_variables,
-    targetEnvironment,
-    config.environments,
-  );
+  const mergedSharedVars = resolveSharedVariables(config.shared_variables, targetEnvironment);
   const deletedSharedVars = getDeletedVariables(mergedSharedVars);
 
   const lenient = options?.lenient ?? false;
@@ -320,66 +295,47 @@ function resolveService(
     params = { ...resolveParams(template.params, entry.params || {}), service_name: name };
   }
 
-  // Start with template values, expand %{param} placeholders (only in template values)
-  let source = template?.source ? expandParamsDeep(template.source, params) : entry.source;
-  const volume = template?.volume ? expandParamsDeep(template.volume, params) : entry.volume;
-  const region = template?.region ? expandParamsDeep(template.region, params) : entry.region;
-  const restartPolicy = template?.restart_policy
-    ? expandParamsDeep(template.restart_policy, params)
-    : entry.restart_policy;
-  const healthcheck = template?.healthcheck
-    ? expandParamsDeep(template.healthcheck, params)
-    : entry.healthcheck;
-  const cronSchedule = template?.cron_schedule
-    ? expandParamsDeep(template.cron_schedule, params)
-    : entry.cron_schedule;
-  const startCommand = template?.start_command
-    ? expandParamsDeep(template.start_command, params)
-    : entry.start_command;
-  const buildCommand = template?.build_command
-    ? expandParamsDeep(template.build_command, params)
-    : entry.build_command;
-  const rootDirectory = template?.root_directory
-    ? expandParamsDeep(template.root_directory, params)
-    : entry.root_directory;
-  const dockerfilePath = template?.dockerfile_path
-    ? expandParamsDeep(template.dockerfile_path, params)
-    : entry.dockerfile_path;
-  const preDeployCommand = template?.pre_deploy_command
-    ? expandParamsDeep(template.pre_deploy_command, params)
-    : entry.pre_deploy_command;
-  const restartPolicyMaxRetries =
-    template?.restart_policy_max_retries ?? entry.restart_policy_max_retries;
-  const sleepApplication = template?.sleep_application ?? entry.sleep_application;
-  const builder = template?.builder ? expandParamsDeep(template.builder, params) : entry.builder;
-  const watchPatterns = template?.watch_patterns
-    ? expandParamsDeep(template.watch_patterns, params)
-    : entry.watch_patterns;
-  const drainingSeconds = template?.draining_seconds ?? entry.draining_seconds;
-  const overlapSeconds = template?.overlap_seconds ?? entry.overlap_seconds;
-  const ipv6Egress = template?.ipv6_egress ?? entry.ipv6_egress;
-  const branch = template?.branch ? expandParamsDeep(template.branch, params) : entry.branch;
-  const checkSuites = template?.check_suites ?? entry.check_suites;
-  const registryCredentials = template?.registry_credentials ?? entry.registry_credentials;
-  const railwayDomain = template?.railway_domain ?? entry.railway_domain;
-  const tcpProxies = template?.tcp_proxies ?? entry.tcp_proxies;
-  const limits = template?.limits ?? entry.limits;
-  const railwayConfigFile = template?.railway_config_file
-    ? expandParamsDeep(template.railway_config_file, params)
-    : entry.railway_config_file;
-  const staticOutboundIps = template?.static_outbound_ips ?? entry.static_outbound_ips;
+  // Resolve each field: entry overrides template. Template values get %{param} expansion.
+  const pick = <T>(entryVal: T | undefined, templateVal: T | undefined): T | undefined => {
+    if (entryVal !== undefined) return entryVal;
+    if (templateVal !== undefined) return expandParamsDeep(templateVal, params) as T;
+    return undefined;
+  };
 
-  // Normalize domains from template and entry
+  const source = pick(entry.source, template?.source);
+  const volume = pick(entry.volume, template?.volume);
+  const region = pick(entry.region, template?.region);
+  const restartPolicy = pick(entry.restart_policy, template?.restart_policy);
+  const healthcheck = pick(entry.healthcheck, template?.healthcheck);
+  const cronSchedule = pick(entry.cron_schedule, template?.cron_schedule);
+  const startCommand = pick(entry.start_command, template?.start_command);
+  const buildCommand = pick(entry.build_command, template?.build_command);
+  const rootDirectory = pick(entry.root_directory, template?.root_directory);
+  const dockerfilePath = pick(entry.dockerfile_path, template?.dockerfile_path);
+  const preDeployCommand = pick(entry.pre_deploy_command, template?.pre_deploy_command);
+  const restartPolicyMaxRetries =
+    entry.restart_policy_max_retries ?? template?.restart_policy_max_retries;
+  const sleepApplication = entry.sleep_application ?? template?.sleep_application;
+  const builder = pick(entry.builder, template?.builder);
+  const watchPatterns = pick(entry.watch_patterns, template?.watch_patterns);
+  const drainingSeconds = entry.draining_seconds ?? template?.draining_seconds;
+  const overlapSeconds = entry.overlap_seconds ?? template?.overlap_seconds;
+  const ipv6Egress = entry.ipv6_egress ?? template?.ipv6_egress;
+  const branch = pick(entry.branch, template?.branch);
+  const checkSuites = entry.check_suites ?? template?.check_suites;
+  const registryCredentials = entry.registry_credentials ?? template?.registry_credentials;
+  const railwayDomain = entry.railway_domain ?? template?.railway_domain;
+  const tcpProxies = entry.tcp_proxies ?? template?.tcp_proxies;
+  const limits = entry.limits ?? template?.limits;
+  const railwayConfigFile = pick(entry.railway_config_file, template?.railway_config_file);
+  const staticOutboundIps = entry.static_outbound_ips ?? template?.static_outbound_ips;
+
+  // Normalize domains: entry domains override template domains if specified
   let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
   if (template?.domains) {
     templateDomains = normalizeDomains(expandParamsDeep(template.domains, params) as DomainEntry[]);
   }
   const entryDomains = normalizeDomains(entry.domains);
-
-  // Inline source override
-  if (entry.source) source = entry.source;
-
-  // Entry domains override template domains if specified
   const domains = entryDomains.length > 0 ? entryDomains : templateDomains;
 
   // Merge variables: template vars (param-expanded) + env file vars

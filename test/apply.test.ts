@@ -1030,6 +1030,152 @@ describe("applyChangeset", () => {
     expect(result.failed[0].error).toContain("No service ID");
   });
 
+  test("update-domain calls updateCustomDomain with correct parameters", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-domain",
+      serviceName: "web",
+      serviceId: "svc-1",
+      domain: "example.com",
+      domainId: "dom-456",
+      targetPort: 8080,
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables).toEqual({
+      id: "dom-456",
+      environmentId: ENV_ID,
+      targetPort: 8080,
+    });
+  });
+
+  test("update-service-domain calls updateServiceDomain with correct parameters", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-service-domain",
+      serviceName: "api",
+      serviceId: "svc-2",
+      domainId: "svcdom-789",
+      domain: "api.example.com",
+      targetPort: 3000,
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(inputOf(calls[0])).toEqual({
+      serviceDomainId: "svcdom-789",
+      serviceId: "svc-2",
+      environmentId: ENV_ID,
+      domain: "api.example.com",
+      targetPort: 3000,
+    });
+  });
+
+  test("update-service-domain without serviceId throws", async () => {
+    const { client } = mockClient();
+    const change: Change = {
+      type: "update-service-domain",
+      serviceName: "ghost",
+      domainId: "svcdom-1",
+      domain: "ghost.example.com",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toContain("No service ID");
+  });
+
+  test("update-volume with name change calls updateVolume", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-volume",
+      serviceName: "db",
+      serviceId: "svc-db",
+      volumeId: "vol-100",
+      name: "new-vol-name",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables).toEqual({
+      volumeId: "vol-100",
+      input: { name: "new-vol-name" },
+    });
+  });
+
+  test("update-volume with mount change calls updateVolumeInstance", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-volume",
+      serviceName: "db",
+      serviceId: "svc-db",
+      volumeId: "vol-200",
+      mount: "/new/mount/path",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables).toEqual({
+      volumeId: "vol-200",
+      environmentId: ENV_ID,
+      input: { mountPath: "/new/mount/path" },
+    });
+  });
+
+  test("update-volume with both name and mount calls both mutations", async () => {
+    const { client, calls } = mockClient();
+    const change: Change = {
+      type: "update-volume",
+      serviceName: "db",
+      serviceId: "svc-db",
+      volumeId: "vol-300",
+      name: "renamed-vol",
+      mount: "/updated/path",
+    };
+
+    const result = await applyChangeset(client, makeChangeset([change]), PROJECT_ID, ENV_ID, {
+      noColor: true,
+    });
+
+    expect(result.applied).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+    // One call for updateVolume (name), one for updateVolumeInstance (mount)
+    expect(calls).toHaveLength(2);
+    expect(calls[0].variables).toEqual({
+      volumeId: "vol-300",
+      input: { name: "renamed-vol" },
+    });
+    expect(calls[1].variables).toEqual({
+      volumeId: "vol-300",
+      environmentId: ENV_ID,
+      input: { mountPath: "/updated/path" },
+    });
+  });
+
   test("create-volume without serviceId throws", async () => {
     const { client } = mockClient();
     const change: Change = {

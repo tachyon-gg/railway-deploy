@@ -63,7 +63,7 @@ function describeChange(change: Change): ChangeDescription {
         category: "Service",
         action: "delete",
         serviceName: change.name,
-        summary: `delete (${change.serviceId})`,
+        summary: "delete",
       };
 
     case "update-service-settings":

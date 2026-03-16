@@ -235,10 +235,17 @@ export const ProjectConfigSchema = z
       .min(1, "at least one environment is required")
       .describe("List of Railway environment names to manage."),
     shared_variables: z
-      .record(
-        z.string(),
-        z.union([z.string().nullable(), z.record(z.string(), z.string().nullable())]),
-      )
+      .object({
+        defaults: z
+          .record(z.string(), z.string().nullable())
+          .optional()
+          .describe("Default shared variables applied to all environments."),
+        environments: z
+          .record(z.string(), z.record(z.string(), z.string().nullable()))
+          .optional()
+          .describe("Per-environment shared variable overrides."),
+      })
+      .strict()
       .optional()
       .describe("Environment-level variables shared across all services."),
     services: z

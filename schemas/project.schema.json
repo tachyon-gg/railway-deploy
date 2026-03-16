@@ -19,12 +19,14 @@
     "shared_variables": {
       "description": "Environment-level variables shared across all services.",
       "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {
-        "anyOf": [
-          {
+      "properties": {
+        "defaults": {
+          "description": "Default shared variables applied to all environments.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
             "anyOf": [
               {
                 "type": "string"
@@ -33,8 +35,15 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "environments": {
+          "description": "Per-environment shared variable overrides.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
           },
-          {
+          "additionalProperties": {
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -50,8 +59,9 @@
               ]
             }
           }
-        ]
-      }
+        }
+      },
+      "additionalProperties": false
     },
     "services": {
       "type": "object",

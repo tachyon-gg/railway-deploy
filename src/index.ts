@@ -8,9 +8,9 @@ import { parse as parseYaml } from "yaml";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
 
+import { config as loadDotenv } from "dotenv";
 import { loadProjectConfig } from "./config/loader.js";
 import { validateProjectConfig } from "./config/schema.js";
-import { loadEnvFile } from "./config/variables.js";
 import { logger } from "./logger.js";
 import { createClient } from "./railway/client.js";
 import { fetchCurrentState, resolveEnvironmentId, resolveProjectId } from "./railway/queries.js";
@@ -85,9 +85,9 @@ async function run(configPath: string, opts: CliOptions) {
   logger.level = opts.verbose ? 4 : 3;
 
   // Load .env file if specified (before any config loading)
+  // Uses dotenv convention: existing env vars take precedence over .env file
   if (opts.envFile) {
-    const envVars = loadEnvFile(opts.envFile);
-    Object.assign(process.env, envVars);
+    loadDotenv({ path: opts.envFile });
   }
 
   // --validate mode: validate config and exit

@@ -57,7 +57,7 @@ describe("changeLabel", () => {
       },
       {
         change: { type: "delete-service", name: "old", serviceId: "svc-1" },
-        mustContain: ["old", "delete", "svc-1"],
+        mustContain: ["old", "delete"],
       },
       {
         change: { type: "upsert-variables", serviceName: "web", variables: { A: "1", B: "2" } },
@@ -89,6 +89,17 @@ describe("changeLabel", () => {
       },
       {
         change: {
+          type: "update-domain",
+          serviceName: "web",
+          serviceId: "s1",
+          domain: "updated.com",
+          domainId: "d2",
+          targetPort: 9090,
+        },
+        mustContain: ["web", "updated.com", "9090"],
+      },
+      {
+        change: {
           type: "update-service-settings",
           serviceName: "api",
           serviceId: "s1",
@@ -109,6 +120,17 @@ describe("changeLabel", () => {
       {
         change: { type: "delete-volume", serviceName: "db", serviceId: "s1", volumeId: "v1" },
         mustContain: ["db", "v1"],
+      },
+      {
+        change: {
+          type: "update-volume",
+          serviceName: "db",
+          serviceId: "s1",
+          volumeId: "v2",
+          name: "new-name",
+          mount: "/new/path",
+        },
+        mustContain: ["db", "name: new-name", "mount: /new/path"],
       },
       {
         change: {
@@ -141,6 +163,17 @@ describe("changeLabel", () => {
       {
         change: { type: "delete-service-domain", serviceName: "web", domainId: "d1" },
         mustContain: ["web", "domain"],
+      },
+      {
+        change: {
+          type: "update-service-domain",
+          serviceName: "web",
+          serviceId: "s1",
+          domainId: "sd1",
+          domain: "custom.railway.app",
+          targetPort: 4000,
+        },
+        mustContain: ["web", "custom.railway.app", "4000"],
       },
       {
         change: { type: "create-tcp-proxy", serviceName: "db", applicationPort: 5432 },

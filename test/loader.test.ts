@@ -64,7 +64,8 @@ environments:
   - alpha
 
 shared_variables:
-  APP_ENVIRONMENT: alpha
+  defaults:
+    APP_ENVIRONMENT: alpha
 
 services:
   web:
@@ -461,6 +462,143 @@ describe("loadProjectConfig", () => {
     expect(worker.rootDirectory).toBe("/packages/worker");
     expect(worker.sleepApplication).toBe(true);
     expect(worker.preDeployCommand).toEqual(["npm run migrate"]);
+  });
+
+  test("entry-level settings override every template field", () => {
+    writeFileSync(
+      join(SERVICES_DIR, "all-fields.yaml"),
+      `
+source:
+  image: template-image:latest
+variables:
+  TEMPLATE_VAR: template
+domains:
+  - template.example.com
+volume:
+  mount: /template-data
+  name: template-vol
+region:
+  region: us-west-1
+  num_replicas: 1
+restart_policy: ON_FAILURE
+healthcheck:
+  path: /template-health
+  timeout: 100
+cron_schedule: "0 * * * *"
+start_command: template-start
+build_command: template-build
+root_directory: /template-root
+dockerfile_path: Dockerfile.template
+pre_deploy_command: template-predeploy
+restart_policy_max_retries: 3
+sleep_application: false
+builder: NIXPACKS
+watch_patterns:
+  - "template/**"
+draining_seconds: 10
+overlap_seconds: 5
+ipv6_egress: false
+branch: template-branch
+check_suites: false
+railway_domain: true
+tcp_proxies:
+  - 3000
+limits:
+  memory_gb: 2
+  vcpus: 1
+railway_config_file: template.toml
+static_outbound_ips: false
+`,
+    );
+    writeFileSync(
+      join(ENVS_DIR, "override-all.yaml"),
+      `
+project: Test
+environments: [alpha]
+services:
+  web:
+    template: ../services/all-fields.yaml
+    source:
+      image: entry-image:v2
+    variables:
+      ENTRY_VAR: entry
+    domains:
+      - entry.example.com
+    volume:
+      mount: /entry-data
+      name: entry-vol
+    region:
+      region: eu-west-1
+      num_replicas: 3
+    restart_policy: ALWAYS
+    healthcheck:
+      path: /entry-health
+      timeout: 200
+    cron_schedule: "*/5 * * * *"
+    start_command: entry-start
+    build_command: entry-build
+    root_directory: /entry-root
+    dockerfile_path: Dockerfile.entry
+    pre_deploy_command:
+      - entry-predeploy-1
+      - entry-predeploy-2
+    restart_policy_max_retries: 10
+    sleep_application: true
+    builder: RAILPACK
+    watch_patterns:
+      - "entry/**"
+    draining_seconds: 30
+    overlap_seconds: 15
+    ipv6_egress: true
+    branch: entry-branch
+    check_suites: true
+    railway_domain:
+      target_port: 8080
+    tcp_proxies:
+      - 5432
+      - 6379
+    limits:
+      memory_gb: 8
+      vcpus: 4
+    railway_config_file: entry.toml
+    static_outbound_ips: true
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "override-all.yaml"), "alpha");
+    const web = result.state.services.web;
+
+    // Every field should use the entry value, not the template value
+    expect(web.source).toEqual({ image: "entry-image:v2" });
+    // Variables merge (entry adds to template)
+    expect(web.variables.TEMPLATE_VAR).toBe("template");
+    expect(web.variables.ENTRY_VAR).toBe("entry");
+    // Domains replace entirely
+    expect(web.domains).toEqual([{ domain: "entry.example.com" }]);
+    expect(web.volume).toEqual({ mount: "/entry-data", name: "entry-vol" });
+    expect(web.region).toEqual({ region: "eu-west-1", numReplicas: 3 });
+    expect(web.restartPolicy).toBe("ALWAYS");
+    expect(web.healthcheck).toEqual({ path: "/entry-health", timeout: 200 });
+    expect(web.cronSchedule).toBe("*/5 * * * *");
+    expect(web.startCommand).toBe("entry-start");
+    expect(web.buildCommand).toBe("entry-build");
+    expect(web.rootDirectory).toBe("/entry-root");
+    expect(web.dockerfilePath).toBe("Dockerfile.entry");
+    expect(web.preDeployCommand).toEqual(["entry-predeploy-1", "entry-predeploy-2"]);
+    expect(web.restartPolicyMaxRetries).toBe(10);
+    expect(web.sleepApplication).toBe(true);
+    expect(web.builder).toBe("RAILPACK");
+    expect(web.watchPatterns).toEqual(["entry/**"]);
+    expect(web.drainingSeconds).toBe(30);
+    expect(web.overlapSeconds).toBe(15);
+    expect(web.ipv6EgressEnabled).toBe(true);
+    expect(web.branch).toBe("entry-branch");
+    expect(web.checkSuites).toBe(true);
+    expect(web.railwayDomain).toEqual({ targetPort: 8080 });
+    expect(web.tcpProxies).toEqual([5432, 6379]);
+    expect(web.limits).toEqual({ memoryGB: 8, vCPUs: 4 });
+    expect(web.railwayConfigFile).toBe("entry.toml");
+    expect(web.staticOutboundIps).toBe(true);
   });
 
   test("loads bucket config into state", () => {
@@ -923,11 +1061,13 @@ describe("project config features", () => {
 project: Test
 environments: [alpha, production]
 shared_variables:
-  DEFAULT_VAR: "shared"
-  alpha:
-    ALPHA_VAR: "a"
-  production:
-    PROD_VAR: "p"
+  defaults:
+    DEFAULT_VAR: "shared"
+  environments:
+    alpha:
+      ALPHA_VAR: "a"
+    production:
+      PROD_VAR: "p"
 services:
   web:
     source:
@@ -1133,47 +1273,6 @@ services:
 
     expect(() => loadProjectConfig(join(ENVS_DIR, "declared-envs.yaml"), "staging")).toThrow(
       "staging",
-    );
-  });
-
-  test("shared variable key matching env name with non-object value throws", () => {
-    writeFileSync(
-      join(ENVS_DIR, "shared-var-collision.yaml"),
-      `
-project: Test
-environments: [alpha]
-shared_variables:
-  alpha: "literal-string"
-services:
-  web:
-    source:
-      image: nginx:latest
-`,
-    );
-
-    expect(() => loadProjectConfig(join(ENVS_DIR, "shared-var-collision.yaml"), "alpha")).toThrow(
-      "matches a declared environment name",
-    );
-  });
-
-  test("shared variable with object value on non-env key throws", () => {
-    writeFileSync(
-      join(ENVS_DIR, "shared-var-object.yaml"),
-      `
-project: Test
-environments: [alpha]
-shared_variables:
-  MY_CONFIG:
-    key: value
-services:
-  web:
-    source:
-      image: nginx:latest
-`,
-    );
-
-    expect(() => loadProjectConfig(join(ENVS_DIR, "shared-var-object.yaml"), "alpha")).toThrow(
-      "does not match any declared environment",
     );
   });
 
