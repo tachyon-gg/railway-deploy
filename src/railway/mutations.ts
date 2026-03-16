@@ -89,16 +89,12 @@ export async function upsertSharedVariables(
   projectId: string,
   environmentId: string,
   variables: Record<string, string>,
-  skipDeploys?: boolean,
 ) {
   await client.request(VariableCollectionUpsertDocument, {
     input: {
       projectId,
       environmentId,
       variables,
-      ...(skipDeploys !== undefined && {
-        skipDeploys: skipDeploys,
-      }),
     },
   });
 }
