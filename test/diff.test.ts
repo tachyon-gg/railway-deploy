@@ -587,6 +587,43 @@ describe("computeChangeset", () => {
     expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();
   });
 
+  test("detects volume name and mount change as single update", () => {
+    const desired = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/new-data", name: "new-vol" },
+        },
+      },
+    });
+    const current = makeState({
+      services: {
+        web: {
+          name: "web",
+          id: "svc-1",
+          variables: {},
+          domains: [],
+          volume: { mount: "/data", name: "vol" },
+        },
+      },
+    });
+
+    const changeset = computeChangeset(desired, current, {}, [], {
+      domainMap: {},
+      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
+    });
+
+    const volUpdates = changeset.changes.filter((c) => c.type === "update-volume");
+    expect(volUpdates).toHaveLength(1);
+    if (volUpdates[0]?.type === "update-volume") {
+      expect(volUpdates[0].name).toBe("new-vol");
+      expect(volUpdates[0].mount).toBe("/new-data");
+    }
+  });
+
   test("no volume change when volume matches", () => {
     const desired = makeState({
       services: {

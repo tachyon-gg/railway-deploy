@@ -493,22 +493,14 @@ function diffVolume(
     const nameChanged = desired.volume.name !== currentVolume.name;
     const mountChanged = desired.volume.mount !== currentVolume.mount;
 
-    if (nameChanged) {
+    if (nameChanged || mountChanged) {
       changes.push({
         type: "update-volume",
         serviceName,
         serviceId: current.id,
         volumeId: currentVolume.volumeId,
-        name: desired.volume.name,
-      });
-    }
-    if (mountChanged) {
-      changes.push({
-        type: "update-volume",
-        serviceName,
-        serviceId: current.id,
-        volumeId: currentVolume.volumeId,
-        mount: desired.volume.mount,
+        ...(nameChanged ? { name: desired.volume.name } : {}),
+        ...(mountChanged ? { mount: desired.volume.mount } : {}),
       });
     }
   }

@@ -191,7 +191,7 @@ function describeChange(change: Change): ChangeDescription {
         category: "Volume",
         action: "delete",
         serviceName: change.serviceName,
-        summary: `volume (${change.volumeId})`,
+        summary: "volume",
       };
 
     case "create-tcp-proxy":
@@ -206,7 +206,7 @@ function describeChange(change: Change): ChangeDescription {
         category: "TCP proxy",
         action: "delete",
         serviceName: change.serviceName,
-        summary: `tcp proxy: ${change.proxyId}`,
+        summary: "tcp proxy",
       };
 
     case "update-service-limits": {

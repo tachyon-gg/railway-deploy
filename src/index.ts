@@ -97,7 +97,14 @@ async function run(configPath: string, opts: CliOptions) {
       throw new Error(`Config file not found: ${absPath}`);
     }
     const raw = readFileSync(absPath, "utf-8");
-    const parsed = parseYaml(raw);
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(raw);
+    } catch (err) {
+      throw new Error(
+        `Invalid YAML in ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const config = validateProjectConfig(parsed);
 
     // Also try full config load to catch template/param issues

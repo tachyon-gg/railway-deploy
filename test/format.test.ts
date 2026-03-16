@@ -119,7 +119,7 @@ describe("changeLabel", () => {
       },
       {
         change: { type: "delete-volume", serviceName: "db", serviceId: "s1", volumeId: "v1" },
-        mustContain: ["db", "v1"],
+        mustContain: ["db", "volume"],
       },
       {
         change: {
@@ -181,7 +181,7 @@ describe("changeLabel", () => {
       },
       {
         change: { type: "delete-tcp-proxy", serviceName: "db", proxyId: "p1" },
-        mustContain: ["db", "p1"],
+        mustContain: ["db", "tcp proxy"],
       },
       {
         change: {
