@@ -196,7 +196,7 @@ async function applyChange(
     }
 
     case "upsert-shared-variables":
-      await upsertSharedVariables(client, projectId, environmentId, change.variables, skipDeploys);
+      await upsertSharedVariables(client, projectId, environmentId, change.variables);
       break;
 
     case "delete-shared-variables":
