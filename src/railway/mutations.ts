@@ -183,9 +183,10 @@ export async function createVolume(
   environmentId: string,
   mountPath: string,
 ) {
-  await client.request(VolumeCreateDocument, {
+  const data = await client.request(VolumeCreateDocument, {
     input: { projectId, serviceId, environmentId, mountPath },
   });
+  return data.volumeCreate;
 }
 
 export async function updateVolume(client: GraphQLClient, volumeId: string, name: string) {

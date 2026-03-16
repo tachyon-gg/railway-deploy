@@ -141,7 +141,16 @@ async function applyChange(
 
       // Create volume if specified
       if (change.volume) {
-        await createVolume(client, projectId, result.id, environmentId, change.volume.mount);
+        const vol = await createVolume(
+          client,
+          projectId,
+          result.id,
+          environmentId,
+          change.volume.mount,
+        );
+        if (change.volume.name && vol.name !== change.volume.name) {
+          await updateVolume(client, vol.id, change.volume.name);
+        }
       }
 
       // Update service instance settings if needed
@@ -292,7 +301,10 @@ async function applyChange(
       if (!serviceId) {
         throw new Error(`No service ID for "${change.serviceName}"`);
       }
-      await createVolume(client, projectId, serviceId, environmentId, change.mount);
+      const vol = await createVolume(client, projectId, serviceId, environmentId, change.mount);
+      if (change.name && vol.name !== change.name) {
+        await updateVolume(client, vol.id, change.name);
+      }
       break;
     }
 

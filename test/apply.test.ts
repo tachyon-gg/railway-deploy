@@ -22,8 +22,12 @@ function mockClient(
     variables?: Record<string, unknown>,
   ): Promise<unknown> => {
     calls.push({ document, variables: variables as MockCall["variables"] });
-    // Default: return a shape that satisfies createService (serviceCreate.id)
-    return { serviceCreate: { id: "mock-svc-id" }, bucketCreate: { id: "mock-bucket-id" } };
+    // Default: return shapes that satisfy createService, createVolume, createBucket
+    return {
+      serviceCreate: { id: "mock-svc-id" },
+      volumeCreate: { id: "mock-vol-id", name: "auto-generated" },
+      bucketCreate: { id: "mock-bucket-id" },
+    };
   };
   return {
     calls,
@@ -96,8 +100,8 @@ describe("applyChangeset", () => {
     });
 
     expect(result.applied).toHaveLength(1);
-    // One call for createService, one for createVolume
-    expect(calls).toHaveLength(2);
+    // One call for createService, one for createVolume, one for updateVolume (set name)
+    expect(calls).toHaveLength(3);
   });
 
   test("create-service with cronSchedule calls updateServiceInstance", async () => {
@@ -373,8 +377,14 @@ describe("applyChangeset", () => {
     });
 
     expect(result.applied).toHaveLength(1);
-    expect(calls).toHaveLength(1);
+    // One call for createVolume, one for updateVolume (set name)
+    expect(calls).toHaveLength(2);
     expect(inputOf(calls[0]).mountPath).toBe("/var/lib/data");
+    // Second call renames the volume
+    expect(calls[1].variables).toEqual({
+      volumeId: "mock-vol-id",
+      input: { name: "db-volume" },
+    });
   });
 
   test("delete-volume change calls the client", async () => {
