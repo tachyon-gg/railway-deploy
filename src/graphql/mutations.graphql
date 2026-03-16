@@ -122,6 +122,10 @@ mutation EgressGatewayAssociationsClear($input: EgressGatewayServiceTargetInput!
   egressGatewayAssociationsClear(input: $input)
 }
 
+mutation ServiceInstanceDeploy($serviceId: String!, $environmentId: String!) {
+  serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+}
+
 mutation EnvironmentCreate($input: EnvironmentCreateInput!) {
   environmentCreate(input: $input) {
     id

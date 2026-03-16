@@ -17,6 +17,7 @@ import { fetchCurrentState, resolveEnvironmentId, resolveProjectId } from "./rai
 import { applyChangeset } from "./reconcile/apply.js";
 import { computeChangeset } from "./reconcile/diff.js";
 import { printApplyResult, printChangeset } from "./reconcile/format.js";
+import type { Change } from "./types/changeset.js";
 
 interface CliOptions {
   apply?: boolean;
@@ -140,6 +141,7 @@ async function run(configPath: string, opts: CliOptions) {
     deletedSharedVars,
     projectName,
     environmentName,
+    allServiceNames,
   } = loadProjectConfig(configPath, opts.environment);
 
   logger.info(`Project: ${projectName}`);
@@ -171,12 +173,14 @@ async function run(configPath: string, opts: CliOptions) {
   logger.info(`Found ${Object.keys(currentState.services).length} existing service(s)`);
 
   // Phase 2: Compute diff
-  let changeset = computeChangeset(desiredState, currentState, deletedVars, deletedSharedVars, {
-    domainMap,
-    volumeMap,
-    serviceDomainMap,
-    tcpProxyMap,
-  });
+  let changeset = computeChangeset(
+    desiredState,
+    currentState,
+    deletedVars,
+    deletedSharedVars,
+    { domainMap, volumeMap, serviceDomainMap, tcpProxyMap },
+    allServiceNames,
+  );
 
   const verbose = opts.verbose ?? false;
 
@@ -232,6 +236,87 @@ async function run(configPath: string, opts: CliOptions) {
 
     if (result.failed.length > 0) {
       process.exit(1);
+    }
+
+    // Track all service IDs that had changes applied (across all rounds)
+    const changedServiceIds = new Set<string>();
+    const collectServiceIds = (applied: Change[]) => {
+      for (const change of applied) {
+        const serviceId = "serviceId" in change ? change.serviceId : undefined;
+        if (serviceId && typeof serviceId === "string") {
+          changedServiceIds.add(serviceId);
+        }
+      }
+    };
+    collectServiceIds(result.applied);
+
+    // Reconciliation loop: re-fetch, re-diff, re-apply until converged (max 3 retries)
+    const MAX_RECONCILE_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_RECONCILE_ATTEMPTS; attempt++) {
+      const {
+        state: reconciledState,
+        domainMap: reconciledDomains,
+        volumeMap: reconciledVolumes,
+        serviceDomainMap: reconciledServiceDomains,
+        tcpProxyMap: reconciledTcpProxies,
+      } = await fetchCurrentState(client, projectId, environmentId);
+
+      const remaining = computeChangeset(
+        desiredState,
+        reconciledState,
+        deletedVars,
+        deletedSharedVars,
+        {
+          domainMap: reconciledDomains,
+          volumeMap: reconciledVolumes,
+          serviceDomainMap: reconciledServiceDomains,
+          tcpProxyMap: reconciledTcpProxies,
+        },
+        allServiceNames,
+      );
+
+      // Filter out registryCredentials — they always diff since Railway never returns them
+      const actionable = remaining.changes.filter(
+        (c) =>
+          !(
+            c.type === "update-service-settings" &&
+            Object.keys(c.settings).every((k) => k === "registryCredentials")
+          ),
+      );
+
+      if (actionable.length === 0) {
+        break;
+      }
+
+      logger.info(
+        `\nReconciling (attempt ${attempt}/${MAX_RECONCILE_ATTEMPTS}): ${actionable.length} change(s) remaining...`,
+      );
+      const retryResult = await applyChangeset(
+        client,
+        { changes: actionable },
+        projectId,
+        environmentId,
+      );
+      printApplyResult(retryResult);
+
+      if (retryResult.failed.length > 0) {
+        process.exit(1);
+      }
+
+      collectServiceIds(retryResult.applied);
+    }
+
+    // Trigger deploys for all services that had changes applied
+    if (changedServiceIds.size > 0) {
+      const { deployServiceInstance } = await import("./railway/mutations.js");
+      logger.info(`\nTriggering deploys for ${changedServiceIds.size} service(s)...`);
+      for (const serviceId of changedServiceIds) {
+        try {
+          await deployServiceInstance(client, serviceId, environmentId);
+        } catch {
+          // Deploy may fail if service is already deploying — not critical
+        }
+      }
     }
   } else {
     if (changeset.changes.length > 0) {

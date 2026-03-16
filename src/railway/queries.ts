@@ -133,11 +133,47 @@ export async function fetchCurrentState(
   const serviceDomainMap: Record<string, { id: string; domain: string }> = {};
   const tcpProxyMap: Record<string, Array<{ id: string; applicationPort: number }>> = {};
 
-  // Only process services that have an instance in this environment
   const serviceNodes = projectData.project.services.edges.map((e) => e.node);
+
+  // Include ALL services — even those without an instance in this environment.
+  // Services without an instance still exist project-wide and should not be re-created.
   const servicesInEnv = serviceNodes.filter((svc) =>
     svc.serviceInstances.edges.some((e) => e.node.environmentId === environmentId),
   );
+  const servicesWithoutInstance = serviceNodes.filter(
+    (svc) => !svc.serviceInstances.edges.some((e) => e.node.environmentId === environmentId),
+  );
+
+  // Build project-level volume lookup (any environment) for services without instances
+  const projectVolumeLookup = new Map<string, { mount: string; name: string; volumeId: string }>();
+  for (const volEdge of projectData.project.volumes.edges) {
+    const volume = volEdge.node;
+    for (const viEdge of volume.volumeInstances.edges) {
+      const vi = viEdge.node;
+      if (vi.serviceId && !projectVolumeLookup.has(vi.serviceId)) {
+        projectVolumeLookup.set(vi.serviceId, {
+          mount: vi.mountPath,
+          name: volume.name,
+          volumeId: volume.id,
+        });
+      }
+    }
+  }
+
+  // Register services without instances so diff knows they exist (prevents re-creation)
+  for (const svc of servicesWithoutInstance) {
+    const vol = projectVolumeLookup.get(svc.id);
+    services[svc.name] = {
+      name: svc.name,
+      id: svc.id,
+      variables: {},
+      domains: [],
+      ...(vol ? { volume: { mount: vol.mount, name: vol.name } } : {}),
+    };
+    if (vol) {
+      volumeMap[svc.name] = vol;
+    }
+  }
 
   // Fetch variables for all services in parallel, tolerating individual failures
   const variableResults = await Promise.allSettled(

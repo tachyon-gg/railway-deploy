@@ -167,6 +167,8 @@ export function loadProjectConfig(
   deletedSharedVars: string[];
   projectName: string;
   environmentName: string;
+  /** All service names in config (across all environments), used to prevent deleting services scoped to other envs. */
+  allServiceNames: Set<string>;
 } {
   const absPath = resolve(projectFilePath);
   if (!existsSync(absPath)) {
@@ -245,6 +247,7 @@ export function loadProjectConfig(
     deletedSharedVars,
     projectName: config.project,
     environmentName: targetEnvironment,
+    allServiceNames: new Set(Object.keys(config.services)),
   };
 }
 

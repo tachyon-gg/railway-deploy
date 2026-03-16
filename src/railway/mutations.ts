@@ -18,6 +18,7 @@ import {
   ServiceDomainCreateDocument,
   ServiceDomainDeleteDocument,
   ServiceDomainUpdateDocument,
+  ServiceInstanceDeployDocument,
   ServiceInstanceLimitsUpdateDocument,
   ServiceInstanceUpdateDocument,
   TcpProxyCreateDocument,
@@ -316,4 +317,12 @@ export async function createEnvironment(client: GraphQLClient, projectId: string
     input: { projectId, name },
   });
   return data.environmentCreate;
+}
+
+export async function deployServiceInstance(
+  client: GraphQLClient,
+  serviceId: string,
+  environmentId: string,
+) {
+  await client.request(ServiceInstanceDeployDocument, { serviceId, environmentId });
 }

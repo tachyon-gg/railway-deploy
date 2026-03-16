@@ -581,7 +581,7 @@ describe("computeChangeset", () => {
     expect(volUpdate).toBeDefined();
     if (volUpdate?.type === "update-volume") {
       expect(volUpdate.name).toBe("new-vol");
-      expect(volUpdate.volumeId).toBe("vol-1");
+      expect(volUpdate.mount).toBeUndefined();
     }
     expect(changeset.changes.find((c) => c.type === "delete-volume")).toBeUndefined();
     expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();

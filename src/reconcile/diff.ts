@@ -39,6 +39,8 @@ export function computeChangeset(
   deletedVars: Record<string, string[]>,
   deletedSharedVars: string[],
   maps: CurrentStateMaps,
+  /** All service names in the project config (across all environments). Services in this set but not in desired are scoped to other envs — don't delete them. */
+  allServiceNames?: Set<string>,
 ): Changeset {
   const { domainMap, volumeMap, serviceDomainMap, tcpProxyMap } = maps;
   const changes: Change[] = [];
@@ -206,9 +208,14 @@ export function computeChangeset(
     }
   }
 
-  // Services to delete (exist in Railway but not in YAML)
+  // Services to delete (exist in Railway but not in config at all).
+  // Services that exist in the config but are scoped to other environments are skipped.
   for (const name of currentNames) {
     if (!desiredNames.has(name)) {
+      // If allServiceNames is provided, only delete if the service is truly absent from the config
+      if (allServiceNames?.has(name)) {
+        continue; // Service exists in config but is scoped to another environment — don't delete
+      }
       const currentSvc = current.services[name];
       if (currentSvc.id) {
         changes.push({
@@ -488,11 +495,10 @@ function diffVolume(
     });
   }
 
-  // Volume update: update name and/or mount path in place (no data loss)
+  // Volume update: update name and/or mount if either differs
   if (desired.volume && currentVolume && current.id) {
     const nameChanged = desired.volume.name !== currentVolume.name;
     const mountChanged = desired.volume.mount !== currentVolume.mount;
-
     if (nameChanged || mountChanged) {
       changes.push({
         type: "update-volume",
