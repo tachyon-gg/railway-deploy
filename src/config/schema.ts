@@ -16,14 +16,26 @@ const SourceConfigSchema = z
     message: "source must have either 'image' or 'repo', not both or neither",
   });
 
-const VolumeConfigSchema = z
+const ServiceVolumeRefSchema = z
   .object({
+    name: z.string().min(1).describe("Volume name (must match a top-level volume key)."),
     mount: z
       .string()
       .describe("Mount path inside the container (must be absolute, e.g., '/data')."),
-    name: z.string().min(1).describe("Volume name."),
   })
-  .describe("Persistent volume configuration.");
+  .describe("Volume reference — links to a top-level volume definition.");
+
+const VolumeConfigFieldsSchema = z.object({
+  size_mb: z.number().int().positive().optional().describe("Volume size in MB."),
+  region: z.string().optional().describe("Volume region (defaults to service region)."),
+});
+
+const VolumeEntrySchema = VolumeConfigFieldsSchema.extend({
+  environments: z
+    .record(z.string(), VolumeConfigFieldsSchema)
+    .optional()
+    .describe("Per-environment volume overrides."),
+}).describe("Top-level volume configuration.");
 
 const HealthcheckConfigSchema = z
   .object({
@@ -100,11 +112,55 @@ const ParamDefSchema = z.object({
     .describe("Default value if not provided by the environment config."),
 });
 
-const BucketConfigSchema = z
+// --- Bucket ---
+
+const BucketConfigFieldsSchema = z.object({
+  region: z.string().optional().describe("Bucket region (e.g., 'iad')."),
+});
+
+const BucketEntrySchema = BucketConfigFieldsSchema.extend({
+  environments: z
+    .record(z.string(), BucketConfigFieldsSchema)
+    .optional()
+    .describe("Per-environment bucket overrides."),
+}).describe("S3-compatible bucket configuration.");
+
+// --- Shared variables ---
+
+const SharedVariableValueSchema = z.object({
+  value: z.string().describe("Variable value. Supports ${ENV_VAR} syntax."),
+});
+
+const SharedVariableEntrySchema = z
+  .union([
+    z.string().describe("Simple string value — same for all environments."),
+    SharedVariableValueSchema.extend({
+      environments: z
+        .record(z.string(), SharedVariableValueSchema)
+        .optional()
+        .describe("Per-environment variable value overrides."),
+    }),
+  ])
+  .describe(
+    "Shared variable — either a plain string (same everywhere) or object with value + per-env overrides.",
+  );
+
+// --- Auto-updates ---
+
+const AutoUpdateScheduleSchema = z.object({
+  day: z.number().int().min(0).max(6).describe("Day of week (0=Sunday, 6=Saturday)."),
+  start_hour: z.number().int().min(0).max(24).describe("Start hour (0-24)."),
+  end_hour: z.number().int().min(0).max(24).describe("End hour (0-24)."),
+});
+
+const AutoUpdateConfigSchema = z
   .object({
-    name: z.string().min(1).describe("Bucket name in Railway."),
+    type: z.string().describe("Update type (e.g., 'patch')."),
+    schedule: z.array(AutoUpdateScheduleSchema).describe("Update schedule entries."),
   })
-  .describe("S3-compatible bucket configuration.");
+  .describe("Auto-update configuration for image-based services.");
+
+// --- Service ---
 
 /** Shared service fields — common to templates, service entries, and overrides. */
 const ServiceFieldsSchema = z.object({
@@ -118,9 +174,19 @@ const ServiceFieldsSchema = z.object({
       "Service-level variables. Set to null to delete. Supports ${ENV_VAR} and ${{service.VAR}} syntax.",
     ),
   domains: z.array(DomainEntrySchema).optional().describe("Custom domains for this service."),
-  volume: VolumeConfigSchema.optional().describe("Persistent volume configuration."),
+  volume: ServiceVolumeRefSchema.optional().describe(
+    "Volume reference — name must match a top-level volume key.",
+  ),
   region: RegionConfigSchema.optional().describe("Deployment region."),
-  restart_policy: z.string().optional().describe("Restart policy: ALWAYS, NEVER, or ON_FAILURE."),
+  restart_policy: z
+    .union([
+      z.string(),
+      z.object({ type: z.string(), max_retries: z.number().int().nonnegative().optional() }),
+    ])
+    .optional()
+    .describe(
+      "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+    ),
   healthcheck: HealthcheckConfigSchema.optional().describe("HTTP healthcheck configuration."),
   cron_schedule: z
     .string()
@@ -137,16 +203,10 @@ const ServiceFieldsSchema = z.object({
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("Command(s) to run before deployment (e.g., DB migrations)."),
-  restart_policy_max_retries: z
-    .number()
-    .int()
-    .nonnegative()
-    .optional()
-    .describe("Max retries for ON_FAILURE restart policy."),
-  sleep_application: z
+  serverless: z
     .boolean()
     .optional()
-    .describe("Enable serverless sleeping. Containers scale to zero when idle."),
+    .describe("Enable serverless mode. Containers scale to zero when idle."),
   builder: z.string().optional().describe("Builder: RAILPACK, NIXPACKS, HEROKU, or PAKETO."),
   watch_patterns: z
     .array(z.string())
@@ -171,7 +231,7 @@ const ServiceFieldsSchema = z.object({
     .string()
     .optional()
     .describe("GitHub branch to deploy from. Changes are auto-deployed from this branch."),
-  check_suites: z
+  wait_for_ci: z
     .boolean()
     .optional()
     .describe("Wait for CI check suites (GitHub Actions) to complete before deploying."),
@@ -192,6 +252,14 @@ const ServiceFieldsSchema = z.object({
     .boolean()
     .optional()
     .describe("Enable static outbound IPs (egress gateways) for the service."),
+  private_hostname: z
+    .string()
+    .optional()
+    .describe("Private network DNS hostname (e.g., 'postgres', 'redis')."),
+  auto_updates: AutoUpdateConfigSchema.optional().describe(
+    "Auto-update configuration for image-based services.",
+  ),
+  metal: z.boolean().optional().describe("Enable Metal build environment (V3)."),
 });
 
 export const ServiceTemplateSchema = ServiceFieldsSchema.extend({
@@ -224,6 +292,8 @@ const ProjectServiceEntrySchema = ServiceEntrySchema.extend({
     ),
 });
 
+// --- Project config ---
+
 export const ProjectConfigSchema = z
   .object({
     project: z
@@ -235,26 +305,22 @@ export const ProjectConfigSchema = z
       .min(1, "at least one environment is required")
       .describe("List of Railway environment names to manage."),
     shared_variables: z
-      .object({
-        defaults: z
-          .record(z.string(), z.string().nullable())
-          .optional()
-          .describe("Default shared variables applied to all environments."),
-        environments: z
-          .record(z.string(), z.record(z.string(), z.string().nullable()))
-          .optional()
-          .describe("Per-environment shared variable overrides."),
-      })
-      .strict()
+      .record(z.string(), SharedVariableEntrySchema)
       .optional()
-      .describe("Environment-level variables shared across all services."),
+      .describe(
+        "Shared variables. Plain string = same everywhere. Object with value + environments = per-env overrides.",
+      ),
     services: z
       .record(z.string(), ProjectServiceEntrySchema)
       .describe("Map of service name to service configuration."),
-    buckets: z
-      .record(z.string(), BucketConfigSchema)
+    volumes: z
+      .record(z.string(), VolumeEntrySchema)
       .optional()
-      .describe("Map of bucket key to S3-compatible Railway bucket configuration."),
+      .describe("Top-level volume definitions. Referenced by services via volume.name."),
+    buckets: z
+      .record(z.string(), BucketEntrySchema)
+      .optional()
+      .describe("S3-compatible Railway bucket definitions."),
   })
   .strict()
   .describe("Declarative project configuration for Railway Deploy.");

@@ -6,16 +6,40 @@ export interface ParamDef {
   default?: string;
 }
 
+/** Auto-update schedule entry for image-based services */
+export interface AutoUpdateScheduleConfig {
+  day: number;
+  start_hour: number;
+  end_hour: number;
+}
+
+/** Auto-update configuration for image-based services */
+export interface AutoUpdateConfig {
+  type: string;
+  schedule: AutoUpdateScheduleConfig[];
+}
+
 /** Source configuration for a service */
 export interface SourceConfig {
   image?: string;
   repo?: string;
 }
 
-/** Volume configuration */
-export interface VolumeConfig {
-  mount: string;
+/** Volume reference on a service — name + mount path */
+export interface ServiceVolumeRef {
   name: string;
+  mount: string;
+}
+
+/** Top-level volume configuration (overridable fields) */
+export interface VolumeConfigFields {
+  size_mb?: number;
+  region?: string;
+}
+
+/** Top-level volume entry with optional per-env overrides */
+export interface VolumeEntry extends VolumeConfigFields {
+  environments?: Record<string, VolumeConfigFields>;
 }
 
 /** Healthcheck configuration */
@@ -30,10 +54,26 @@ export interface RegionConfig {
   num_replicas?: number;
 }
 
-/** Bucket configuration */
-export interface BucketConfig {
-  name: string;
+/** Bucket configuration (overridable fields) */
+export interface BucketConfigFields {
+  region?: string;
 }
+
+/** Top-level bucket entry with optional per-env overrides */
+export interface BucketEntry extends BucketConfigFields {
+  environments?: Record<string, BucketConfigFields>;
+}
+
+/**
+ * Shared variable entry — either a plain string (same value everywhere)
+ * or an object with value + optional per-env overrides.
+ */
+export type SharedVariableEntry =
+  | string
+  | {
+      value: string;
+      environments?: Record<string, { value: string }>;
+    };
 
 /** Domain entry — supports both simple string and object with target_port */
 export type DomainEntry = string | { domain: string; target_port?: number };
@@ -49,9 +89,9 @@ export interface ServiceFields {
   source?: SourceConfig;
   variables?: Record<string, string | null>;
   domains?: DomainEntry[];
-  volume?: VolumeConfig;
+  volume?: ServiceVolumeRef;
   region?: RegionConfig;
-  restart_policy?: string;
+  restart_policy?: string | { type: string; max_retries?: number };
   healthcheck?: HealthcheckConfig;
   cron_schedule?: string;
   start_command?: string;
@@ -59,21 +99,23 @@ export interface ServiceFields {
   root_directory?: string;
   dockerfile_path?: string;
   pre_deploy_command?: string | string[];
-  restart_policy_max_retries?: number;
-  sleep_application?: boolean;
+  serverless?: boolean;
   builder?: string;
   watch_patterns?: string[];
   draining_seconds?: number;
   overlap_seconds?: number;
   ipv6_egress?: boolean;
   branch?: string;
-  check_suites?: boolean;
+  wait_for_ci?: boolean;
   registry_credentials?: { username: string; password: string };
   railway_domain?: boolean | { target_port: number };
   tcp_proxies?: number[];
   limits?: LimitsConfig;
   railway_config_file?: string;
   static_outbound_ips?: boolean;
+  private_hostname?: string;
+  auto_updates?: AutoUpdateConfig;
+  metal?: boolean;
 }
 
 /** Service template YAML structure (services/*.yaml) */

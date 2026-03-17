@@ -13,14 +13,22 @@ import { loadProjectConfig } from "./config/loader.js";
 import { validateProjectConfig } from "./config/schema.js";
 import { logger } from "./logger.js";
 import { createClient } from "./railway/client.js";
-import { fetchCurrentState, resolveEnvironmentId, resolveProjectId } from "./railway/queries.js";
-import { applyChangeset } from "./reconcile/apply.js";
-import { computeChangeset } from "./reconcile/diff.js";
-import { printApplyResult, printChangeset } from "./reconcile/format.js";
-import type { Change } from "./types/changeset.js";
+import {
+  fetchEnvironmentConfig,
+  fetchServiceMap,
+  hasEgressGateways,
+  resolveEnvironmentId,
+  resolveProjectId,
+} from "./railway/queries.js";
+import { applyConfigDiff } from "./reconcile/apply.js";
+import { buildEnvironmentConfig } from "./reconcile/config.js";
+import type { DiffContext } from "./reconcile/diff.js";
+import { computeConfigDiff } from "./reconcile/diff.js";
+import { printApplyResult, printConfigDiff } from "./reconcile/format.js";
 
 interface CliOptions {
   apply?: boolean;
+  stage?: boolean;
   yes?: boolean;
   envFile?: string;
   verbose?: boolean;
@@ -63,6 +71,7 @@ Docs: https://github.com/tachyon-gg/railway-deploy`,
   .argument("<config>", "path to project YAML config file")
   .option("-e, --environment <name>", "target environment (required except for --validate)")
   .option("--apply", "execute changes (default is dry-run)")
+  .option("--stage", "stage changes in Railway without committing (preview in dashboard)")
   .option("--env-file <path>", "load .env file for ${VAR} resolution")
   .option("--no-color", "disable colored output")
   .option("--validate", "validate config without connecting to Railway")
@@ -86,7 +95,6 @@ async function run(configPath: string, opts: CliOptions) {
   logger.level = opts.verbose ? 4 : 3;
 
   // Load .env file if specified (before any config loading)
-  // Uses dotenv convention: existing env vars take precedence over .env file
   if (opts.envFile) {
     loadDotenv({ path: opts.envFile });
   }
@@ -109,7 +117,6 @@ async function run(configPath: string, opts: CliOptions) {
     const config = validateProjectConfig(parsed);
 
     // Also try full config load to catch template/param issues
-    // Use lenient mode so missing ${ENV_VAR} references don't fail validation
     const envsToValidate = opts.environment ? [opts.environment] : config.environments;
     for (const env of envsToValidate) {
       loadProjectConfig(configPath, env, { lenient: true });
@@ -123,6 +130,11 @@ async function run(configPath: string, opts: CliOptions) {
   if (!opts.environment) {
     logger.error("--environment (-e) is required.");
     logger.error("  Specify which environment to target: railway-deploy <config> -e <environment>");
+    process.exit(1);
+  }
+
+  if (opts.apply && opts.stage) {
+    logger.error("--apply and --stage are mutually exclusive.");
     process.exit(1);
   }
 
@@ -148,7 +160,7 @@ async function run(configPath: string, opts: CliOptions) {
   logger.info(`Environment: ${environmentName}`);
   logger.info(`Services: ${Object.keys(desiredState.services).join(", ")}`);
 
-  // Phase 1: Connect to Railway and fetch current state
+  // Phase 1: Connect to Railway
   const client = createClient(token);
 
   logger.info("\nResolving project and environment...");
@@ -161,166 +173,127 @@ async function run(configPath: string, opts: CliOptions) {
   logger.info(`Project ID: ${projectId}`);
   logger.info(`Environment ID: ${environmentId}`);
 
+  // Phase 2: Fetch current state
   logger.info("\nFetching current state from Railway...");
-  const {
-    state: currentState,
-    domainMap,
-    volumeMap,
-    serviceDomainMap,
-    tcpProxyMap,
-  } = await fetchCurrentState(client, projectId, environmentId);
+  const serviceMap = await fetchServiceMap(client, projectId, environmentId);
+  const currentConfig = await fetchEnvironmentConfig(client, environmentId);
 
-  logger.info(`Found ${Object.keys(currentState.services).length} existing service(s)`);
+  logger.info(`Found ${serviceMap.currentServiceNames.size} existing service(s)`);
 
-  // Phase 2: Compute diff
-  let changeset = computeChangeset(
-    desiredState,
-    currentState,
-    deletedVars,
-    deletedSharedVars,
-    { domainMap, volumeMap, serviceDomainMap, tcpProxyMap },
-    allServiceNames,
+  // Resolve bucket IDs in desired state
+  for (const [key, bucket] of Object.entries(desiredState.buckets)) {
+    const existingId = serviceMap.bucketNameToId.get(bucket.name);
+    if (existingId) {
+      desiredState.buckets[key] = { ...bucket, id: existingId };
+    }
+  }
+
+  // Fetch egress gateway status for services that configure static_outbound_ips
+  const egressByService = new Map<string, boolean>();
+  const servicesWithEgress = Object.entries(desiredState.services).filter(
+    ([, svc]) => svc.staticOutboundIps !== undefined,
   );
+  if (servicesWithEgress.length > 0) {
+    const egressResults = await Promise.allSettled(
+      servicesWithEgress.map(async ([name]) => {
+        const svcId = serviceMap.serviceNameToId.get(name);
+        if (!svcId) return { name, hasEgress: false };
+        return { name, hasEgress: await hasEgressGateways(client, svcId, environmentId) };
+      }),
+    );
+    for (const result of egressResults) {
+      if (result.status === "fulfilled") {
+        egressByService.set(result.value.name, result.value.hasEgress);
+      }
+    }
+  }
+
+  // Phase 3: Build desired EnvironmentConfig
+  const desiredConfig = buildEnvironmentConfig(desiredState, {
+    serviceNameToId: serviceMap.serviceNameToId,
+    volumeIdByService: serviceMap.volumeIdByService,
+  });
+
+  // Phase 4: Compute diff
+  const diffCtx: DiffContext = {
+    serviceIdToName: serviceMap.serviceIdToName,
+    desiredState,
+    allServiceNames,
+    deletedSharedVars,
+    deletedVars,
+    egressByService,
+  };
+
+  let diff = computeConfigDiff(desiredConfig, currentConfig, diffCtx);
 
   const verbose = opts.verbose ?? false;
 
   // Filter out data-destructive operations unless --allow-data-loss is set
-  const DATA_LOSS_TYPES = new Set(["delete-volume"]);
-  const dataLossChanges = changeset.changes.filter((c) => DATA_LOSS_TYPES.has(c.type));
-  if (dataLossChanges.length > 0 && !opts.allowDataLoss) {
-    changeset = { changes: changeset.changes.filter((c) => !DATA_LOSS_TYPES.has(c.type)) };
-    logger.warn(
-      `Filtered ${dataLossChanges.length} data-destructive operation(s) (use --allow-data-loss to include)`,
+  if (diff.dataLossEntries.length > 0 && !opts.allowDataLoss) {
+    const filtered = diff.entries.filter(
+      (e) =>
+        !diff.dataLossEntries.some(
+          (dl) => dl.path === e.path && dl.serviceName === e.serviceName && dl.action === e.action,
+        ),
     );
+    diff = {
+      ...diff,
+      entries: filtered,
+      hasDataLoss: false,
+      dataLossEntries: [],
+    };
+    logger.warn(`Filtered data-destructive operation(s) (use --allow-data-loss to include)`);
   }
 
-  printChangeset(changeset, {
-    verbose,
-    currentState,
-  });
+  printConfigDiff(diff, { verbose });
 
-  // Phase 3: Apply (if --apply flag is set)
-  if (opts.apply) {
-    if (changeset.changes.length === 0) {
+  // Phase 5: Apply or stage
+  if (opts.apply || opts.stage) {
+    const totalChanges =
+      diff.entries.length + diff.servicesToCreate.length + diff.servicesToDelete.length;
+
+    if (totalChanges === 0) {
       logger.info("Nothing to apply.");
       process.exit(0);
     }
 
-    // Check for destructive operations and prompt for confirmation
-    const hasDestructive = changeset.changes.some(
-      (c) =>
-        c.type === "delete-service" ||
-        c.type === "delete-volume" ||
-        c.type === "delete-bucket" ||
-        c.type === "delete-domain" ||
-        c.type === "delete-variables" ||
-        c.type === "delete-shared-variables" ||
-        c.type === "delete-service-domain" ||
-        c.type === "delete-tcp-proxy" ||
-        c.type === "disable-static-ips",
-    );
+    // Check for destructive operations and prompt for confirmation (apply only)
+    if (opts.apply) {
+      const hasDestructive =
+        diff.servicesToDelete.length > 0 || diff.entries.some((e) => e.action === "remove");
 
-    if (hasDestructive && !opts.yes) {
-      const ok = await confirm(
-        "This changeset includes destructive operations (deletions). Continue?",
-      );
-      if (!ok) {
-        logger.info("Aborted.");
-        process.exit(2);
+      if (hasDestructive && !opts.yes) {
+        const ok = await confirm(
+          "This changeset includes destructive operations (deletions). Continue?",
+        );
+        if (!ok) {
+          logger.info("Aborted.");
+          process.exit(2);
+        }
       }
     }
 
-    logger.info("Applying changes...\n");
-    const result = await applyChangeset(client, changeset, projectId, environmentId);
+    logger.info(`${opts.stage ? "Staging" : "Applying"} changes...\n`);
+    const result = await applyConfigDiff(
+      client,
+      diff,
+      desiredConfig,
+      projectId,
+      environmentId,
+      desiredState,
+      serviceMap.serviceNameToId,
+      { stageOnly: opts.stage },
+    );
     printApplyResult(result);
 
-    if (result.failed.length > 0) {
+    if (result.errors.length > 0) {
       process.exit(1);
     }
-
-    // Track all service IDs that had changes applied (across all rounds)
-    const changedServiceIds = new Set<string>();
-    const collectServiceIds = (applied: Change[]) => {
-      for (const change of applied) {
-        const serviceId = "serviceId" in change ? change.serviceId : undefined;
-        if (serviceId && typeof serviceId === "string") {
-          changedServiceIds.add(serviceId);
-        }
-      }
-    };
-    collectServiceIds(result.applied);
-
-    // Reconciliation loop: re-fetch, re-diff, re-apply until converged (max 3 retries)
-    const MAX_RECONCILE_ATTEMPTS = 3;
-    for (let attempt = 1; attempt <= MAX_RECONCILE_ATTEMPTS; attempt++) {
-      const {
-        state: reconciledState,
-        domainMap: reconciledDomains,
-        volumeMap: reconciledVolumes,
-        serviceDomainMap: reconciledServiceDomains,
-        tcpProxyMap: reconciledTcpProxies,
-      } = await fetchCurrentState(client, projectId, environmentId);
-
-      const remaining = computeChangeset(
-        desiredState,
-        reconciledState,
-        deletedVars,
-        deletedSharedVars,
-        {
-          domainMap: reconciledDomains,
-          volumeMap: reconciledVolumes,
-          serviceDomainMap: reconciledServiceDomains,
-          tcpProxyMap: reconciledTcpProxies,
-        },
-        allServiceNames,
-      );
-
-      // Filter out registryCredentials — they always diff since Railway never returns them
-      const actionable = remaining.changes.filter(
-        (c) =>
-          !(
-            c.type === "update-service-settings" &&
-            Object.keys(c.settings).every((k) => k === "registryCredentials")
-          ),
-      );
-
-      if (actionable.length === 0) {
-        break;
-      }
-
-      logger.info(
-        `\nReconciling (attempt ${attempt}/${MAX_RECONCILE_ATTEMPTS}): ${actionable.length} change(s) remaining...`,
-      );
-      const retryResult = await applyChangeset(
-        client,
-        { changes: actionable },
-        projectId,
-        environmentId,
-      );
-      printApplyResult(retryResult);
-
-      if (retryResult.failed.length > 0) {
-        process.exit(1);
-      }
-
-      collectServiceIds(retryResult.applied);
-    }
-
-    // Trigger deploys for all services that had changes applied
-    if (changedServiceIds.size > 0) {
-      const { deployServiceInstance } = await import("./railway/mutations.js");
-      logger.info(`\nTriggering deploys for ${changedServiceIds.size} service(s)...`);
-      for (const serviceId of changedServiceIds) {
-        try {
-          await deployServiceInstance(client, serviceId, environmentId);
-        } catch {
-          // Deploy may fail if service is already deploying — not critical
-        }
-      }
-    }
   } else {
-    if (changeset.changes.length > 0) {
-      logger.info("Run with --apply to execute these changes.");
+    const totalChanges =
+      diff.entries.length + diff.servicesToCreate.length + diff.servicesToDelete.length;
+    if (totalChanges > 0) {
+      logger.info("Run with --apply to execute these changes, or --stage to preview in Railway.");
       process.exit(2);
     }
   }

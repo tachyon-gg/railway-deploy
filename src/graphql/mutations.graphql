@@ -9,37 +9,6 @@ mutation ServiceDelete($id: String!) {
   serviceDelete(id: $id)
 }
 
-mutation VariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
-  variableCollectionUpsert(input: $input)
-}
-
-mutation VariableDelete($input: VariableDeleteInput!) {
-  variableDelete(input: $input)
-}
-
-mutation CustomDomainCreate($input: CustomDomainCreateInput!) {
-  customDomainCreate(input: $input) {
-    id
-    domain
-  }
-}
-
-mutation CustomDomainUpdate($id: String!, $environmentId: String!, $targetPort: Int) {
-  customDomainUpdate(id: $id, environmentId: $environmentId, targetPort: $targetPort)
-}
-
-mutation CustomDomainDelete($id: String!) {
-  customDomainDelete(id: $id)
-}
-
-mutation ServiceInstanceUpdate(
-  $serviceId: String!
-  $environmentId: String
-  $input: ServiceInstanceUpdateInput!
-) {
-  serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
-}
-
 mutation VolumeCreate($input: VolumeCreateInput!) {
   volumeCreate(input: $input) {
     id
@@ -54,60 +23,14 @@ mutation VolumeUpdate($volumeId: String!, $input: VolumeUpdateInput!) {
   }
 }
 
-mutation VolumeInstanceUpdate(
-  $volumeId: String!
-  $environmentId: String
-  $input: VolumeInstanceUpdateInput!
-) {
-  volumeInstanceUpdate(volumeId: $volumeId, environmentId: $environmentId, input: $input)
+mutation EnvironmentDelete($id: String!) {
+  environmentDelete(id: $id)
 }
 
-mutation VolumeDelete($volumeId: String!) {
-  volumeDelete(volumeId: $volumeId)
-}
-
-mutation BucketCreate($input: BucketCreateInput!) {
-  bucketCreate(input: $input) {
+mutation EnvironmentCreate($input: EnvironmentCreateInput!) {
+  environmentCreate(input: $input) {
     id
     name
-  }
-}
-
-mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
-  serviceDomainCreate(input: $input) {
-    id
-    domain
-  }
-}
-
-mutation ServiceDomainUpdate($input: ServiceDomainUpdateInput!) {
-  serviceDomainUpdate(input: $input)
-}
-
-mutation ServiceDomainDelete($id: String!) {
-  serviceDomainDelete(id: $id)
-}
-
-mutation TcpProxyCreate($input: TCPProxyCreateInput!) {
-  tcpProxyCreate(input: $input) {
-    id
-    domain
-    proxyPort
-  }
-}
-
-mutation TcpProxyDelete($id: String!) {
-  tcpProxyDelete(id: $id)
-}
-
-mutation ServiceInstanceLimitsUpdate($input: ServiceInstanceLimitsUpdateInput!) {
-  serviceInstanceLimitsUpdate(input: $input)
-}
-
-mutation DeploymentTriggerUpdate($id: String!, $input: DeploymentTriggerUpdateInput!) {
-  deploymentTriggerUpdate(id: $id, input: $input) {
-    id
-    branch
   }
 }
 
@@ -122,13 +45,25 @@ mutation EgressGatewayAssociationsClear($input: EgressGatewayServiceTargetInput!
   egressGatewayAssociationsClear(input: $input)
 }
 
-mutation ServiceInstanceDeploy($serviceId: String!, $environmentId: String!) {
-  serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+mutation EnvironmentStageChanges(
+  $environmentId: String!
+  $input: EnvironmentConfig!
+  $merge: Boolean
+) {
+  environmentStageChanges(environmentId: $environmentId, input: $input, merge: $merge) {
+    id
+    status
+  }
 }
 
-mutation EnvironmentCreate($input: EnvironmentCreateInput!) {
-  environmentCreate(input: $input) {
-    id
-    name
-  }
+mutation EnvironmentPatchCommitStaged(
+  $environmentId: String!
+  $commitMessage: String
+  $skipDeploys: Boolean
+) {
+  environmentPatchCommitStaged(
+    environmentId: $environmentId
+    commitMessage: $commitMessage
+    skipDeploys: $skipDeploys
+  )
 }

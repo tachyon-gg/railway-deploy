@@ -1,96 +1,141 @@
-import { beforeAll, describe, expect } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import {
   createService,
+  createVolume,
   deleteService,
-  deleteSharedVariable,
-  deleteVariable,
-  updateServiceInstance,
-  upsertSharedVariables,
-  upsertVariables,
+  updateVolume,
 } from "../../src/railway/mutations.js";
-import { fetchCurrentState } from "../../src/railway/queries.js";
-import { cleanProject, client, ENV_ID, hasToken, initClient, itif, PROJECT_ID } from "./helpers.js";
+import { fetchEnvironmentConfig, fetchServiceMap } from "../../src/railway/queries.js";
+import {
+  client,
+  createTestEnvironment,
+  deleteTestEnvironment,
+  ENV_ID,
+  hasToken,
+  initClient,
+  itif,
+  PROJECT_ID,
+  patchAndFetch,
+  TEST_PREFIX,
+} from "./helpers.js";
 
-beforeAll(() => initClient());
+const SVC_LIFECYCLE = `${TEST_PREFIX}-lifecycle`;
+const SVC_VOL = `${TEST_PREFIX}-vol`;
+
+beforeAll(async () => {
+  initClient();
+  if (hasToken) await createTestEnvironment();
+});
+
+afterAll(async () => {
+  if (hasToken) await deleteTestEnvironment();
+});
 
 describe("Railway Integration — service lifecycle", () => {
   let serviceId: string;
 
-  beforeAll(async () => {
-    if (!hasToken) return;
-    await cleanProject();
-  });
-
-  itif(hasToken)("creates a service", async () => {
-    const result = await createService(client, PROJECT_ID, "test-svc", {
-      image: "nginx:latest",
-    });
+  itif(hasToken)("creates a service via serviceCreate", async () => {
+    const result = await createService(
+      client,
+      PROJECT_ID,
+      SVC_LIFECYCLE,
+      { image: "nginx:latest" },
+      ENV_ID,
+    );
     serviceId = result.id;
-    expect(result.name).toBe("test-svc");
-    expect(result.id).toBeTruthy();
+    expect(serviceId).toBeDefined();
+    expect(result.name).toBe(SVC_LIFECYCLE);
   });
 
-  itif(hasToken)("service appears in current state", async () => {
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"]).toBeDefined();
-    expect(state.services["test-svc"].id).toBe(serviceId);
+  itif(hasToken)("service appears in service map", async () => {
+    const map = await fetchServiceMap(client, PROJECT_ID, ENV_ID);
+    expect(map.serviceNameToId.get(SVC_LIFECYCLE)).toBe(serviceId);
+    expect(map.serviceIdToName.get(serviceId)).toBe(SVC_LIFECYCLE);
   });
 
-  itif(hasToken)("upserts variables on a service", async () => {
-    await upsertVariables(client, PROJECT_ID, ENV_ID, serviceId, {
-      FOO: "bar",
-      BAZ: "qux",
+  itif(hasToken)("service appears in environment config", async () => {
+    const config = await fetchEnvironmentConfig(client, ENV_ID);
+    expect(config.services?.[serviceId]).toBeDefined();
+  });
+
+  itif(hasToken)("patches service variables via stage+commit", async () => {
+    const config = await patchAndFetch({
+      services: {
+        [serviceId]: {
+          variables: {
+            TEST_VAR: { value: "hello" },
+            PORT: { value: "3000" },
+          },
+        },
+      },
     });
-
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"].variables.FOO).toBe("bar");
-    expect(state.services["test-svc"].variables.BAZ).toBe("qux");
+    expect(config.services?.[serviceId]?.variables?.TEST_VAR?.value).toBe("hello");
+    expect(config.services?.[serviceId]?.variables?.PORT?.value).toBe("3000");
   });
 
-  itif(hasToken)("deletes a variable", async () => {
-    await deleteVariable(client, PROJECT_ID, ENV_ID, serviceId, "BAZ");
-
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"].variables.BAZ).toBeUndefined();
-    expect(state.services["test-svc"].variables.FOO).toBe("bar");
-  });
-
-  itif(hasToken)("updates service instance settings", async () => {
-    await updateServiceInstance(client, serviceId, ENV_ID, {
-      cronSchedule: "*/10 * * * *",
+  itif(hasToken)("updates existing variable value", async () => {
+    const config = await patchAndFetch({
+      services: {
+        [serviceId]: {
+          variables: {
+            TEST_VAR: { value: "updated" },
+          },
+        },
+      },
     });
-
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"].cronSchedule).toBe("*/10 * * * *");
+    expect(config.services?.[serviceId]?.variables?.TEST_VAR?.value).toBe("updated");
+    // PORT should still be present (merge mode)
+    expect(config.services?.[serviceId]?.variables?.PORT?.value).toBe("3000");
   });
 
-  itif(hasToken)("deletes a service", async () => {
+  itif(hasToken)("deletes the service", async () => {
     await deleteService(client, serviceId);
-
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.services["test-svc"]).toBeUndefined();
+    const map = await fetchServiceMap(client, PROJECT_ID, ENV_ID);
+    expect(map.serviceNameToId.has(SVC_LIFECYCLE)).toBe(false);
   });
 });
 
-describe("Railway Integration — shared variables", () => {
+describe("Railway Integration — volume lifecycle", () => {
+  let serviceId: string;
+  let volumeId: string;
+
   beforeAll(async () => {
     if (!hasToken) return;
-    await cleanProject();
+    const result = await createService(
+      client,
+      PROJECT_ID,
+      SVC_VOL,
+      { image: "nginx:latest" },
+      ENV_ID,
+    );
+    serviceId = result.id;
   });
 
-  itif(hasToken)("upserts shared variables", async () => {
-    await upsertSharedVariables(client, PROJECT_ID, ENV_ID, {
-      SHARED_KEY: "shared_value",
-    });
-
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.sharedVariables.SHARED_KEY).toBe("shared_value");
+  itif(hasToken)("creates a volume on a service", async () => {
+    const vol = await createVolume(client, PROJECT_ID, serviceId, ENV_ID, "/data");
+    volumeId = vol.id;
+    expect(volumeId).toBeDefined();
   });
 
-  itif(hasToken)("deletes a shared variable", async () => {
-    await deleteSharedVariable(client, PROJECT_ID, ENV_ID, "SHARED_KEY");
+  itif(hasToken)("renames a volume", async () => {
+    const uniqueName = `vol-test-${Date.now()}`;
+    await updateVolume(client, volumeId, uniqueName);
+  });
 
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.sharedVariables.SHARED_KEY).toBeUndefined();
+  itif(hasToken)("volume appears in environment config", async () => {
+    const config = await fetchEnvironmentConfig(client, ENV_ID);
+    expect(config.services?.[serviceId]?.volumeMounts?.[volumeId]).toBeDefined();
+    expect(config.services?.[serviceId]?.volumeMounts?.[volumeId]?.mountPath).toBe("/data");
+    // Top-level volume entry
+    expect(config.volumes?.[volumeId]).toBeDefined();
+  });
+
+  itif(hasToken)("volume ID appears in service map", async () => {
+    const map = await fetchServiceMap(client, PROJECT_ID, ENV_ID);
+    expect(map.volumeIdByService.get(SVC_VOL)).toBe(volumeId);
+  });
+
+  itif(hasToken)("cleanup", async () => {
+    await deleteService(client, serviceId);
   });
 });

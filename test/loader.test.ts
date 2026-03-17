@@ -64,8 +64,7 @@ environments:
   - alpha
 
 shared_variables:
-  defaults:
-    APP_ENVIRONMENT: alpha
+  APP_ENVIRONMENT: alpha
 
 services:
   web:
@@ -119,7 +118,7 @@ services:
     template: ../services/worker.yaml
     params:
       tag: "7"
-    sleep_application: true
+    serverless: true
     pre_deploy_command: "npm run migrate"
 `,
   );
@@ -139,9 +138,8 @@ services:
 
 buckets:
   terraform-state:
-    name: tachyon-terraform
-  media:
-    name: media-uploads
+    region: iad
+  media: {}
 `,
   );
 
@@ -460,7 +458,7 @@ describe("loadProjectConfig", () => {
     expect(worker.startCommand).toBe("npm run worker");
     expect(worker.buildCommand).toBe("npm run build");
     expect(worker.rootDirectory).toBe("/packages/worker");
-    expect(worker.sleepApplication).toBe(true);
+    expect(worker.serverless).toBe(true);
     expect(worker.preDeployCommand).toEqual(["npm run migrate"]);
   });
 
@@ -480,7 +478,9 @@ volume:
 region:
   region: us-west-1
   num_replicas: 1
-restart_policy: ON_FAILURE
+restart_policy:
+  type: ON_FAILURE
+  max_retries: 3
 healthcheck:
   path: /template-health
   timeout: 100
@@ -490,8 +490,7 @@ build_command: template-build
 root_directory: /template-root
 dockerfile_path: Dockerfile.template
 pre_deploy_command: template-predeploy
-restart_policy_max_retries: 3
-sleep_application: false
+serverless: false
 builder: NIXPACKS
 watch_patterns:
   - "template/**"
@@ -499,7 +498,7 @@ draining_seconds: 10
 overlap_seconds: 5
 ipv6_egress: false
 branch: template-branch
-check_suites: false
+wait_for_ci: false
 railway_domain: true
 tcp_proxies:
   - 3000
@@ -530,7 +529,9 @@ services:
     region:
       region: eu-west-1
       num_replicas: 3
-    restart_policy: ALWAYS
+    restart_policy:
+      type: ALWAYS
+      max_retries: 10
     healthcheck:
       path: /entry-health
       timeout: 200
@@ -542,8 +543,7 @@ services:
     pre_deploy_command:
       - entry-predeploy-1
       - entry-predeploy-2
-    restart_policy_max_retries: 10
-    sleep_application: true
+    serverless: true
     builder: RAILPACK
     watch_patterns:
       - "entry/**"
@@ -551,7 +551,7 @@ services:
     overlap_seconds: 15
     ipv6_egress: true
     branch: entry-branch
-    check_suites: true
+    wait_for_ci: true
     railway_domain:
       target_port: 8080
     tcp_proxies:
@@ -586,14 +586,14 @@ services:
     expect(web.dockerfilePath).toBe("Dockerfile.entry");
     expect(web.preDeployCommand).toEqual(["entry-predeploy-1", "entry-predeploy-2"]);
     expect(web.restartPolicyMaxRetries).toBe(10);
-    expect(web.sleepApplication).toBe(true);
+    expect(web.serverless).toBe(true);
     expect(web.builder).toBe("RAILPACK");
     expect(web.watchPatterns).toEqual(["entry/**"]);
     expect(web.drainingSeconds).toBe(30);
     expect(web.overlapSeconds).toBe(15);
     expect(web.ipv6EgressEnabled).toBe(true);
     expect(web.branch).toBe("entry-branch");
-    expect(web.checkSuites).toBe(true);
+    expect(web.waitForCi).toBe(true);
     expect(web.railwayDomain).toEqual({ targetPort: 8080 });
     expect(web.tcpProxies).toEqual([5432, 6379]);
     expect(web.limits).toEqual({ memoryGB: 8, vCPUs: 4 });
@@ -606,8 +606,8 @@ services:
 
     expect(result.projectName).toBe("Test Project");
     expect(result.state.buckets).toEqual({
-      "terraform-state": { id: "", name: "tachyon-terraform" },
-      media: { id: "", name: "media-uploads" },
+      "terraform-state": { id: "", name: "terraform-state", region: "iad" },
+      media: { id: "", name: "media" },
     });
   });
 
@@ -1061,13 +1061,14 @@ describe("project config features", () => {
 project: Test
 environments: [alpha, production]
 shared_variables:
-  defaults:
-    DEFAULT_VAR: "shared"
-  environments:
-    alpha:
-      ALPHA_VAR: "a"
-    production:
-      PROD_VAR: "p"
+  DEFAULT_VAR: "shared"
+  OVERRIDE_VAR:
+    value: "default"
+    environments:
+      alpha:
+        value: "alpha-val"
+      production:
+        value: "prod-val"
 services:
   web:
     source:
@@ -1077,13 +1078,11 @@ services:
 
     const alpha = loadProjectConfig(join(ENVS_DIR, "shared-vars.yaml"), "alpha");
     expect(alpha.state.sharedVariables.DEFAULT_VAR).toBe("shared");
-    expect(alpha.state.sharedVariables.ALPHA_VAR).toBe("a");
-    expect("PROD_VAR" in alpha.state.sharedVariables).toBe(false);
+    expect(alpha.state.sharedVariables.OVERRIDE_VAR).toBe("alpha-val");
 
     const prod = loadProjectConfig(join(ENVS_DIR, "shared-vars.yaml"), "production");
     expect(prod.state.sharedVariables.DEFAULT_VAR).toBe("shared");
-    expect(prod.state.sharedVariables.PROD_VAR).toBe("p");
-    expect("ALPHA_VAR" in prod.state.sharedVariables).toBe(false);
+    expect(prod.state.sharedVariables.OVERRIDE_VAR).toBe("prod-val");
   });
 
   test("service defaults + env overrides merge (params)", () => {
@@ -1395,6 +1394,190 @@ services:
       expect(result.template).toBe("../services/web-prod.yaml");
       expect(result.params).toEqual({ new_param: "prod" });
     });
+  });
+
+  test("throws when service volume references undeclared volume name", () => {
+    writeFileSync(
+      join(ENVS_DIR, "bad-vol-ref.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+volumes:
+  my-data: {}
+services:
+  web:
+    source:
+      image: nginx:latest
+    volume:
+      mount: /data
+      name: nonexistent-vol
+`,
+    );
+
+    expect(() => loadProjectConfig(join(ENVS_DIR, "bad-vol-ref.yaml"), "alpha")).toThrow(
+      'references volume "nonexistent-vol" which is not declared',
+    );
+  });
+
+  test("resolves volumes with size_mb and region per environment", () => {
+    writeFileSync(
+      join(ENVS_DIR, "volumes-full.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+  - production
+volumes:
+  db-data:
+    size_mb: 1024
+    region: iad
+    environments:
+      production:
+        size_mb: 4096
+        region: ord
+services:
+  db:
+    source:
+      image: postgres:16
+    volume:
+      mount: /data
+      name: db-data
+`,
+    );
+
+    const alpha = loadProjectConfig(join(ENVS_DIR, "volumes-full.yaml"), "alpha");
+    expect(alpha.state.volumes).toEqual({
+      "db-data": { sizeMB: 1024, region: "iad" },
+    });
+
+    const prod = loadProjectConfig(join(ENVS_DIR, "volumes-full.yaml"), "production");
+    expect(prod.state.volumes).toEqual({
+      "db-data": { sizeMB: 4096, region: "ord" },
+    });
+  });
+
+  test("resolves buckets with per-environment overrides", () => {
+    writeFileSync(
+      join(ENVS_DIR, "buckets-env.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+  - production
+services:
+  web:
+    source:
+      image: nginx:latest
+buckets:
+  media:
+    region: iad
+    environments:
+      production:
+        region: ord
+`,
+    );
+
+    const alpha = loadProjectConfig(join(ENVS_DIR, "buckets-env.yaml"), "alpha");
+    expect(alpha.state.buckets.media.region).toBe("iad");
+
+    const prod = loadProjectConfig(join(ENVS_DIR, "buckets-env.yaml"), "production");
+    expect(prod.state.buckets.media.region).toBe("ord");
+  });
+
+  test("resolves registryCredentials from env vars", () => {
+    writeFileSync(
+      join(ENVS_DIR, "registry-creds.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+services:
+  web:
+    source:
+      image: ghcr.io/org/app:latest
+    registry_credentials:
+      username: myuser
+      password: mypass
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "registry-creds.yaml"), "alpha");
+    expect(result.state.services.web.registryCredentials).toEqual({
+      username: "myuser",
+      password: "mypass",
+    });
+  });
+
+  test("resolves autoUpdates with schedule", () => {
+    writeFileSync(
+      join(ENVS_DIR, "auto-updates.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    auto_updates:
+      type: digest
+      schedule:
+        - day: 1
+          start_hour: 0
+          end_hour: 6
+        - day: 3
+          start_hour: 12
+          end_hour: 18
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "auto-updates.yaml"), "alpha");
+    expect(result.state.services.web.autoUpdates).toEqual({
+      type: "digest",
+      schedule: [
+        { day: 1, startHour: 0, endHour: 6 },
+        { day: 3, startHour: 12, endHour: 18 },
+      ],
+    });
+  });
+
+  test("resolves private_hostname", () => {
+    writeFileSync(
+      join(ENVS_DIR, "private-endpoint.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    private_hostname: web.internal
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "private-endpoint.yaml"), "alpha");
+    expect(result.state.services.web.privateHostname).toBe("web.internal");
+  });
+
+  test("resolves metal", () => {
+    writeFileSync(
+      join(ENVS_DIR, "build-env.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    metal: true
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "build-env.yaml"), "alpha");
+    expect(result.state.services.web.metal).toBe(true);
   });
 
   test("per-environment template override loads different template", () => {

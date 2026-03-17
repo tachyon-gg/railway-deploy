@@ -62,20 +62,20 @@
       }
     },
     "volume": {
-      "description": "Persistent volume configuration.",
+      "description": "Volume reference — name must match a top-level volume key.",
       "type": "object",
       "properties": {
-        "mount": {
-          "type": "string",
-          "description": "Mount path inside the container (must be absolute, e.g., '/data')."
-        },
         "name": {
           "type": "string",
           "minLength": 1,
-          "description": "Volume name."
+          "description": "Volume name (must match a top-level volume key)."
+        },
+        "mount": {
+          "type": "string",
+          "description": "Mount path inside the container (must be absolute, e.g., '/data')."
         }
       },
-      "required": ["mount", "name"],
+      "required": ["name", "mount"],
       "additionalProperties": false
     },
     "region": {
@@ -98,8 +98,27 @@
       "additionalProperties": false
     },
     "restart_policy": {
-      "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE.",
-      "type": "string"
+      "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "max_retries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        }
+      ]
     },
     "healthcheck": {
       "description": "HTTP healthcheck configuration.",
@@ -153,14 +172,8 @@
         }
       ]
     },
-    "restart_policy_max_retries": {
-      "description": "Max retries for ON_FAILURE restart policy.",
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
-    },
-    "sleep_application": {
-      "description": "Enable serverless sleeping. Containers scale to zero when idle.",
+    "serverless": {
+      "description": "Enable serverless mode. Containers scale to zero when idle.",
       "type": "boolean"
     },
     "builder": {
@@ -194,7 +207,7 @@
       "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
       "type": "string"
     },
-    "check_suites": {
+    "wait_for_ci": {
       "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
       "type": "boolean"
     },
@@ -267,6 +280,55 @@
     },
     "static_outbound_ips": {
       "description": "Enable static outbound IPs (egress gateways) for the service.",
+      "type": "boolean"
+    },
+    "private_hostname": {
+      "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
+      "type": "string"
+    },
+    "auto_updates": {
+      "description": "Auto-update configuration for image-based services.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Update type (e.g., 'patch')."
+        },
+        "schedule": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "day": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 6,
+                "description": "Day of week (0=Sunday, 6=Saturday)."
+              },
+              "start_hour": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 24,
+                "description": "Start hour (0-24)."
+              },
+              "end_hour": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 24,
+                "description": "End hour (0-24)."
+              }
+            },
+            "required": ["day", "start_hour", "end_hour"],
+            "additionalProperties": false
+          },
+          "description": "Update schedule entries."
+        }
+      },
+      "required": ["type", "schedule"],
+      "additionalProperties": false
+    },
+    "metal": {
+      "description": "Enable Metal build environment (V3).",
       "type": "boolean"
     },
     "params": {

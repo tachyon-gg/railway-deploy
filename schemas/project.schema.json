@@ -17,51 +17,49 @@
       "description": "List of Railway environment names to manage."
     },
     "shared_variables": {
-      "description": "Environment-level variables shared across all services.",
+      "description": "Shared variables. Plain string = same everywhere. Object with value + environments = per-env overrides.",
       "type": "object",
-      "properties": {
-        "defaults": {
-          "description": "Default shared variables applied to all environments.",
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "description": "Simple string value — same for all environments."
           },
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "environments": {
-          "description": "Per-environment shared variable overrides.",
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
+          {
             "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "anyOf": [
-                {
+            "properties": {
+              "value": {
+                "type": "string",
+                "description": "Variable value. Supports ${ENV_VAR} syntax."
+              },
+              "environments": {
+                "description": "Per-environment variable value overrides.",
+                "type": "object",
+                "propertyNames": {
                   "type": "string"
                 },
-                {
-                  "type": "null"
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "description": "Variable value. Supports ${ENV_VAR} syntax."
+                    }
+                  },
+                  "required": ["value"],
+                  "additionalProperties": false
                 }
-              ]
-            }
+              }
+            },
+            "required": ["value"],
+            "additionalProperties": false
           }
-        }
-      },
-      "additionalProperties": false
+        ],
+        "description": "Shared variable — either a plain string (same everywhere) or object with value + per-env overrides."
+      }
     },
     "services": {
       "type": "object",
@@ -131,20 +129,20 @@
             }
           },
           "volume": {
-            "description": "Persistent volume configuration.",
+            "description": "Volume reference — name must match a top-level volume key.",
             "type": "object",
             "properties": {
-              "mount": {
-                "type": "string",
-                "description": "Mount path inside the container (must be absolute, e.g., '/data')."
-              },
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Volume name."
+                "description": "Volume name (must match a top-level volume key)."
+              },
+              "mount": {
+                "type": "string",
+                "description": "Mount path inside the container (must be absolute, e.g., '/data')."
               }
             },
-            "required": ["mount", "name"],
+            "required": ["name", "mount"],
             "additionalProperties": false
           },
           "region": {
@@ -167,8 +165,27 @@
             "additionalProperties": false
           },
           "restart_policy": {
-            "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE.",
-            "type": "string"
+            "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "max_retries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+              }
+            ]
           },
           "healthcheck": {
             "description": "HTTP healthcheck configuration.",
@@ -222,14 +239,8 @@
               }
             ]
           },
-          "restart_policy_max_retries": {
-            "description": "Max retries for ON_FAILURE restart policy.",
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "sleep_application": {
-            "description": "Enable serverless sleeping. Containers scale to zero when idle.",
+          "serverless": {
+            "description": "Enable serverless mode. Containers scale to zero when idle.",
             "type": "boolean"
           },
           "builder": {
@@ -263,7 +274,7 @@
             "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
             "type": "string"
           },
-          "check_suites": {
+          "wait_for_ci": {
             "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
             "type": "boolean"
           },
@@ -336,6 +347,55 @@
           },
           "static_outbound_ips": {
             "description": "Enable static outbound IPs (egress gateways) for the service.",
+            "type": "boolean"
+          },
+          "private_hostname": {
+            "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
+            "type": "string"
+          },
+          "auto_updates": {
+            "description": "Auto-update configuration for image-based services.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Update type (e.g., 'patch')."
+              },
+              "schedule": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6,
+                      "description": "Day of week (0=Sunday, 6=Saturday)."
+                    },
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["day", "start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "description": "Update schedule entries."
+              }
+            },
+            "required": ["type", "schedule"],
+            "additionalProperties": false
+          },
+          "metal": {
+            "description": "Enable Metal build environment (V3).",
             "type": "boolean"
           },
           "template": {
@@ -421,20 +481,20 @@
                   }
                 },
                 "volume": {
-                  "description": "Persistent volume configuration.",
+                  "description": "Volume reference — name must match a top-level volume key.",
                   "type": "object",
                   "properties": {
-                    "mount": {
-                      "type": "string",
-                      "description": "Mount path inside the container (must be absolute, e.g., '/data')."
-                    },
                     "name": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Volume name."
+                      "description": "Volume name (must match a top-level volume key)."
+                    },
+                    "mount": {
+                      "type": "string",
+                      "description": "Mount path inside the container (must be absolute, e.g., '/data')."
                     }
                   },
-                  "required": ["mount", "name"],
+                  "required": ["name", "mount"],
                   "additionalProperties": false
                 },
                 "region": {
@@ -457,8 +517,27 @@
                   "additionalProperties": false
                 },
                 "restart_policy": {
-                  "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE.",
-                  "type": "string"
+                  "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string"
+                        },
+                        "max_retries": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["type"],
+                      "additionalProperties": false
+                    }
+                  ]
                 },
                 "healthcheck": {
                   "description": "HTTP healthcheck configuration.",
@@ -512,14 +591,8 @@
                     }
                   ]
                 },
-                "restart_policy_max_retries": {
-                  "description": "Max retries for ON_FAILURE restart policy.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "sleep_application": {
-                  "description": "Enable serverless sleeping. Containers scale to zero when idle.",
+                "serverless": {
+                  "description": "Enable serverless mode. Containers scale to zero when idle.",
                   "type": "boolean"
                 },
                 "builder": {
@@ -553,7 +626,7 @@
                   "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
                   "type": "string"
                 },
-                "check_suites": {
+                "wait_for_ci": {
                   "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
                   "type": "boolean"
                 },
@@ -628,6 +701,55 @@
                   "description": "Enable static outbound IPs (egress gateways) for the service.",
                   "type": "boolean"
                 },
+                "private_hostname": {
+                  "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
+                  "type": "string"
+                },
+                "auto_updates": {
+                  "description": "Auto-update configuration for image-based services.",
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Update type (e.g., 'patch')."
+                    },
+                    "schedule": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "day": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 6,
+                            "description": "Day of week (0=Sunday, 6=Saturday)."
+                          },
+                          "start_hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 24,
+                            "description": "Start hour (0-24)."
+                          },
+                          "end_hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 24,
+                            "description": "End hour (0-24)."
+                          }
+                        },
+                        "required": ["day", "start_hour", "end_hour"],
+                        "additionalProperties": false
+                      },
+                      "description": "Update schedule entries."
+                    }
+                  },
+                  "required": ["type", "schedule"],
+                  "additionalProperties": false
+                },
+                "metal": {
+                  "description": "Enable Metal build environment (V3).",
+                  "type": "boolean"
+                },
                 "template": {
                   "description": "Relative path to a service template YAML file.",
                   "type": "string"
@@ -651,8 +773,8 @@
       },
       "description": "Map of service name to service configuration."
     },
-    "buckets": {
-      "description": "Map of bucket key to S3-compatible Railway bucket configuration.",
+    "volumes": {
+      "description": "Top-level volume definitions. Referenced by services via volume.name.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -660,13 +782,75 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Bucket name in Railway."
+          "size_mb": {
+            "description": "Volume size in MB.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "region": {
+            "description": "Volume region (defaults to service region).",
+            "type": "string"
+          },
+          "environments": {
+            "description": "Per-environment volume overrides.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "size_mb": {
+                  "description": "Volume size in MB.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "region": {
+                  "description": "Volume region (defaults to service region).",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
-        "required": ["name"],
+        "additionalProperties": false,
+        "description": "Top-level volume configuration."
+      }
+    },
+    "buckets": {
+      "description": "S3-compatible Railway bucket definitions.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "description": "Bucket region (e.g., 'iad').",
+            "type": "string"
+          },
+          "environments": {
+            "description": "Per-environment bucket overrides.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "description": "Bucket region (e.g., 'iad').",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
         "additionalProperties": false,
         "description": "S3-compatible bucket configuration."
       }

@@ -1,21 +1,31 @@
-import { beforeAll, describe, expect } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import {
-  fetchCurrentState,
+  fetchEnvironmentConfig,
+  fetchServiceMap,
   resolveEnvironmentId,
   resolveProjectId,
 } from "../../src/railway/queries.js";
 import {
   client,
+  createTestEnvironment,
+  deleteTestEnvironment,
   ENV_ID,
-  ENV_NAME,
   hasToken,
   initClient,
   itif,
   PROJECT_ID,
   PROJECT_NAME,
+  TEST_ENV_NAME,
 } from "./helpers.js";
 
-beforeAll(() => initClient());
+beforeAll(async () => {
+  initClient();
+  if (hasToken) await createTestEnvironment();
+});
+
+afterAll(async () => {
+  if (hasToken) await deleteTestEnvironment();
+});
 
 describe("Railway Integration — queries", () => {
   itif(hasToken)("resolves project ID by name", async () => {
@@ -30,7 +40,7 @@ describe("Railway Integration — queries", () => {
   });
 
   itif(hasToken)("resolves environment ID by name", async () => {
-    const id = await resolveEnvironmentId(client, PROJECT_ID, ENV_NAME);
+    const id = await resolveEnvironmentId(client, PROJECT_ID, TEST_ENV_NAME);
     expect(id).toBe(ENV_ID);
   });
 
@@ -40,12 +50,18 @@ describe("Railway Integration — queries", () => {
     );
   });
 
-  itif(hasToken)("fetches current state with correct structure", async () => {
-    const { state } = await fetchCurrentState(client, PROJECT_ID, ENV_ID);
-    expect(state.projectId).toBe(PROJECT_ID);
-    expect(state.environmentId).toBe(ENV_ID);
-    expect(typeof state.services).toBe("object");
-    expect(typeof state.sharedVariables).toBe("object");
-    expect(typeof state.buckets).toBe("object");
+  itif(hasToken)("fetches service map with correct structure", async () => {
+    const map = await fetchServiceMap(client, PROJECT_ID, ENV_ID);
+    expect(map.serviceNameToId).toBeInstanceOf(Map);
+    expect(map.serviceIdToName).toBeInstanceOf(Map);
+    expect(map.currentServiceNames).toBeInstanceOf(Set);
+    expect(map.bucketNameToId).toBeInstanceOf(Map);
+    expect(map.volumeIdByService).toBeInstanceOf(Map);
+  });
+
+  itif(hasToken)("fetches environment config as valid object", async () => {
+    const config = await fetchEnvironmentConfig(client, ENV_ID);
+    expect(typeof config).toBe("object");
+    expect(config).toBeDefined();
   });
 });

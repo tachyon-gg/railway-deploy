@@ -40,12 +40,10 @@ export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): P
     ...opts,
   };
 
-  let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (error) {
-      lastError = error;
       if (attempt >= maxRetries || !isRetryable(error)) {
         throw error;
       }
@@ -55,5 +53,6 @@ export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): P
       await new Promise((resolve) => setTimeout(resolve, jitter));
     }
   }
-  throw lastError;
+  // Unreachable: the loop always returns or throws
+  throw new Error("withRetry: unexpected end of retry loop");
 }

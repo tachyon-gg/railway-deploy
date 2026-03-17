@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { logger } from "../src/logger.js";
-import { computeChangeset } from "../src/reconcile/diff.js";
+import type { DiffContext } from "../src/reconcile/diff.js";
+import { computeConfigDiff } from "../src/reconcile/diff.js";
+import type { EnvironmentConfig } from "../src/types/envconfig.js";
 import type { State } from "../src/types/state.js";
 
 function makeState(overrides: Partial<State> = {}): State {
@@ -9,2159 +10,1256 @@ function makeState(overrides: Partial<State> = {}): State {
     environmentId: "env-1",
     sharedVariables: {},
     services: {},
+    volumes: {},
     buckets: {},
     ...overrides,
   };
 }
 
-describe("computeChangeset", () => {
-  test("returns empty changeset when states match", () => {
-    const state = makeState({
-      sharedVariables: { APP_ENV: "alpha" },
+function makeCtx(overrides: Partial<DiffContext> = {}): DiffContext {
+  return {
+    serviceIdToName: new Map(),
+    desiredState: makeState(),
+    allServiceNames: new Set(),
+    deletedSharedVars: [],
+    deletedVars: {},
+    ...overrides,
+  };
+}
+
+describe("computeConfigDiff", () => {
+  test("returns empty diff for matching configs", () => {
+    const config: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: { PORT: "3000" },
-          domains: [],
+        "svc-1": {
+          variables: { PORT: { value: "3000" } },
         },
       },
+      sharedVariables: { APP_ENV: { value: "alpha" } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: { PORT: "3000" }, domains: [] } },
+      }),
     });
-
-    const changeset = computeChangeset(state, state, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
+    const diff = computeConfigDiff(config, config, ctx);
+    expect(diff.entries).toEqual([]);
+    expect(diff.servicesToCreate).toEqual([]);
+    expect(diff.servicesToDelete).toEqual([]);
   });
 
-  test("creates service when missing from current state", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "nginx:latest" },
-          variables: { PORT: "3000" },
-          domains: [{ domain: "app.example.com" }],
-        },
-      },
-    });
-    const current = makeState();
+  // --- Shared variables ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-
-    const createSvc = changeset.changes.find((c) => c.type === "create-service");
-    expect(createSvc).toBeDefined();
-    expect(createSvc?.type).toBe("create-service");
-    if (createSvc?.type === "create-service") {
-      expect(createSvc?.name).toBe("web");
-      expect(createSvc?.source).toEqual({ image: "nginx:latest" });
-    }
-
-    const upsertVars = changeset.changes.find((c) => c.type === "upsert-variables");
-    expect(upsertVars).toBeDefined();
-    if (upsertVars?.type === "upsert-variables") {
-      expect(upsertVars?.variables).toEqual({ PORT: "3000" });
-    }
-
-    // Domain should be created for new service
-    const createDomain = changeset.changes.find((c) => c.type === "create-domain");
-    expect(createDomain).toBeDefined();
-    if (createDomain?.type === "create-domain") {
-      expect(createDomain?.domain).toBe("app.example.com");
-    }
+  test("detects added shared variable", () => {
+    const desired: EnvironmentConfig = {
+      sharedVariables: { APP_ENV: { value: "alpha" } },
+    };
+    const current: EnvironmentConfig = {};
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    expect(diff.entries).toHaveLength(1);
+    expect(diff.entries[0].action).toBe("add");
+    expect(diff.entries[0].category).toBe("shared-variable");
+    expect(diff.entries[0].newValue).toBe("alpha");
   });
 
-  test("deletes service when missing from desired state", () => {
-    const desired = makeState();
-    const current = makeState({
-      services: {
-        old: {
-          name: "old",
-          id: "svc-old",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const del = changeset.changes.find((c) => c.type === "delete-service");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-service") {
-      expect(del?.name).toBe("old");
-      expect(del?.serviceId).toBe("svc-old");
-    }
+  test("detects updated shared variable", () => {
+    const desired: EnvironmentConfig = {
+      sharedVariables: { APP_ENV: { value: "beta" } },
+    };
+    const current: EnvironmentConfig = {
+      sharedVariables: { APP_ENV: { value: "alpha" } },
+    };
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    expect(diff.entries).toHaveLength(1);
+    expect(diff.entries[0].action).toBe("update");
+    expect(diff.entries[0].oldValue).toBe("alpha");
+    expect(diff.entries[0].newValue).toBe("beta");
   });
 
-  test("upserts changed variables", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { PORT: "8080", NEW: "val" },
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { PORT: "3000", OLD: "gone" },
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-
-    const upsert = changeset.changes.find((c) => c.type === "upsert-variables");
-    expect(upsert).toBeDefined();
-    if (upsert?.type === "upsert-variables") {
-      expect(upsert?.variables).toEqual({ PORT: "8080", NEW: "val" });
-    }
-
-    const del = changeset.changes.find((c) => c.type === "delete-variables");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-variables") {
-      expect(del?.variableNames).toContain("OLD");
-    }
+  test("detects removed shared variable", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      sharedVariables: { APP_ENV: { value: "alpha" } },
+    };
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    expect(diff.entries).toHaveLength(1);
+    expect(diff.entries[0].action).toBe("remove");
+    expect(diff.entries[0].oldValue).toBe("alpha");
   });
 
-  test("handles explicitly deleted variables (null in YAML)", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { KEEP: "yes" },
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { KEEP: "yes", EXPLICIT_DEL: "was here" },
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, { web: ["EXPLICIT_DEL"] }, [], {
-      domainMap: {},
-    });
-
-    const del = changeset.changes.find((c) => c.type === "delete-variables");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-variables") {
-      expect(del?.variableNames).toContain("EXPLICIT_DEL");
-    }
+  test("detects explicitly deleted shared variable", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      sharedVariables: { SECRET: { value: "old" } },
+    };
+    const ctx = makeCtx({ deletedSharedVars: ["SECRET"] });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.entries).toHaveLength(1);
+    expect(diff.entries[0].action).toBe("remove");
   });
 
-  test("diffs shared variables", () => {
-    const desired = makeState({ sharedVariables: { APP: "alpha", NEW: "v" } });
-    const current = makeState({ sharedVariables: { APP: "beta", OLD: "x" } });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-
-    const upsert = changeset.changes.find((c) => c.type === "upsert-shared-variables");
-    expect(upsert).toBeDefined();
-    if (upsert?.type === "upsert-shared-variables") {
-      expect(upsert?.variables).toEqual({ APP: "alpha", NEW: "v" });
-    }
-
-    const del = changeset.changes.find((c) => c.type === "delete-shared-variables");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-shared-variables") {
-      expect(del?.variableNames).toContain("OLD");
-    }
+  test("ignores RAILWAY_ shared variables", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      sharedVariables: { RAILWAY_TOKEN: { value: "xxx" } },
+    };
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    expect(diff.entries).toEqual([]);
   });
 
-  test("creates domain when missing", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "app.example.com" }],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
+  // --- Service variables ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const dom = changeset.changes.find((c) => c.type === "create-domain");
-    expect(dom).toBeDefined();
-    if (dom?.type === "create-domain") {
-      expect(dom?.domain).toBe("app.example.com");
-    }
+  test("detects added service variable", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { variables: { PORT: { value: "3000" } } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: { PORT: "3000" }, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const varEntries = diff.entries.filter((e) => e.category === "variable");
+    expect(varEntries).toHaveLength(1);
+    expect(varEntries[0].action).toBe("add");
+    expect(varEntries[0].serviceName).toBe("web");
   });
 
-  test("deletes domain not in desired state", () => {
-    const desired = makeState({
+  test("detects updated service variable", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
+        "svc-1": { variables: { PORT: { value: "4000" } } },
       },
-    });
-    const current = makeState({
+    };
+    const current: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "old.example.com" }],
-        },
+        "svc-1": { variables: { PORT: { value: "3000" } } },
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: { PORT: "4000" }, domains: [] } },
+      }),
     });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: { web: [{ id: "dom-1", domain: "old.example.com" }] },
-    });
-
-    const del = changeset.changes.find((c) => c.type === "delete-domain");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-domain") {
-      expect(del?.domain).toBe("old.example.com");
-      expect(del?.domainId).toBe("dom-1");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    const varEntries = diff.entries.filter((e) => e.category === "variable");
+    expect(varEntries).toHaveLength(1);
+    expect(varEntries[0].action).toBe("update");
+    expect(varEntries[0].oldValue).toBe("3000");
+    expect(varEntries[0].newValue).toBe("4000");
   });
 
-  test("detects service settings changes", () => {
-    const desired = makeState({
+  test("detects removed service variable", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          source: { image: "nginx:v2" },
-          cronSchedule: "*/10 * * * *",
-        },
+        "svc-1": { variables: { OLD_VAR: { value: "old" } } },
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          source: { image: "nginx:v1" },
-          cronSchedule: "*/5 * * * *",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update?.settings.source).toEqual({ image: "nginx:v2" });
-      expect(update?.settings.cronSchedule).toBe("*/10 * * * *");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    const varEntries = diff.entries.filter((e) => e.category === "variable");
+    expect(varEntries).toHaveLength(1);
+    expect(varEntries[0].action).toBe("remove");
   });
 
-  test("creates service with volume and cron", () => {
-    const desired = makeState({
+  test("ignores RAILWAY_ service variables", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
       services: {
-        worker: {
-          name: "worker",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-          cronSchedule: "*/5 * * * *",
-        },
+        "svc-1": { variables: { RAILWAY_TOKEN: { value: "xxx" } } },
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
     });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-service");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service") {
-      expect(create?.volume).toEqual({ mount: "/data", name: "vol" });
-      expect(create?.cronSchedule).toBe("*/5 * * * *");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.entries).toEqual([]);
   });
 
-  // --- New tests ---
+  // --- Service lifecycle ---
 
-  test("RAILWAY_* variables are filtered from diff", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { APP: "yes" },
-          domains: [],
+  test("detects service to create (no ID in map)", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {};
+    const ctx = makeCtx({
+      desiredState: makeState({
+        services: {
+          web: { name: "web", source: { image: "nginx" }, variables: {}, domains: [] },
         },
-      },
+      }),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: { APP: "yes", RAILWAY_SERVICE_ID: "xxx", RAILWAY_ENVIRONMENT: "prod" },
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    // RAILWAY_* vars should NOT be deleted
-    expect(changeset.changes).toEqual([]);
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToCreate).toHaveLength(1);
+    expect(diff.servicesToCreate[0].name).toBe("web");
+    expect(diff.servicesToCreate[0].source?.image).toBe("nginx");
   });
 
-  test("deep equality with different key orderings produces no diff", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          source: { image: "nginx:latest", repo: undefined },
-          healthcheck: { path: "/health", timeout: 300 },
-        },
-      },
+  test("detects service to delete", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "old-service"]]),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          // Same values but potentially different key order
-          source: { repo: undefined, image: "nginx:latest" },
-          healthcheck: { timeout: 300, path: "/health" },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToDelete).toHaveLength(1);
+    expect(diff.servicesToDelete[0].name).toBe("old-service");
+    expect(diff.servicesToDelete[0].serviceId).toBe("svc-1");
   });
 
-  test("multiple domains diff — create, delete, no-op", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "a.example.com" }, { domain: "b.example.com" }],
-        },
-      },
+  test("skips deletion if service is scoped to another environment", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "staging-only"]]),
+      allServiceNames: new Set(["staging-only"]),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "a.example.com" }, { domain: "c.example.com" }],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {
-        web: [
-          { id: "dom-a", domain: "a.example.com" },
-          { id: "dom-c", domain: "c.example.com" },
-        ],
-      },
-    });
-
-    // b.example.com should be created
-    const createDomains = changeset.changes.filter((c) => c.type === "create-domain");
-    expect(createDomains.length).toBe(1);
-    if (createDomains[0].type === "create-domain") {
-      expect(createDomains[0].domain).toBe("b.example.com");
-    }
-
-    // c.example.com should be deleted
-    const deleteDomains = changeset.changes.filter((c) => c.type === "delete-domain");
-    expect(deleteDomains.length).toBe(1);
-    if (deleteDomains[0].type === "delete-domain") {
-      expect(deleteDomains[0].domain).toBe("c.example.com");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToDelete).toEqual([]);
   });
 
-  test("empty config produces no changes against empty state", () => {
-    const desired = makeState();
-    const current = makeState();
+  // --- Domains ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
-  });
-
-  test("service without ID is not deleted", () => {
-    const desired = makeState();
-    const current = makeState({
+  test("detects added domain", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        orphan: {
-          name: "orphan",
-          variables: {},
-          domains: [],
-          // No id — should not trigger delete
+        "svc-1": {
+          networking: { customDomains: { "app.example.com": { port: 8080 } } },
         },
       },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
     });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const deletes = changeset.changes.filter((c) => c.type === "delete-service");
-    expect(deletes).toEqual([]);
+    const diff = computeConfigDiff(desired, current, ctx);
+    const domainEntries = diff.entries.filter((e) => e.category === "domain");
+    expect(domainEntries).toHaveLength(1);
+    expect(domainEntries[0].action).toBe("add");
   });
 
-  test("volume removal produces delete-volume change", () => {
-    const desired = makeState({
+  test("detects removed domain", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          // No volume in desired
+        "svc-1": {
+          networking: { customDomains: { "old.example.com": {} } },
         },
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
     });
-    const current = makeState({
+    const diff = computeConfigDiff(desired, current, ctx);
+    const domainEntries = diff.entries.filter((e) => e.category === "domain");
+    expect(domainEntries).toHaveLength(1);
+    expect(domainEntries[0].action).toBe("remove");
+  });
+
+  // --- Deploy settings ---
+
+  test("detects changed deploy setting", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
+        "svc-1": { deploy: { startCommand: "npm start" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { startCommand: "node app.js" } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const settingEntries = diff.entries.filter((e) => e.category === "setting");
+    expect(settingEntries.some((e) => e.path === "deploy.startCommand")).toBe(true);
+  });
+
+  // --- Volumes ---
+
+  test("detects volume mount removal as data loss", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/data" } } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: { db: { name: "db", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.hasDataLoss).toBe(true);
+    expect(diff.dataLossEntries).toHaveLength(1);
+    expect(diff.dataLossEntries[0].category).toBe("volume");
+  });
+
+  // --- Build settings ---
+
+  test("detects changed builder", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { builder: "DOCKERFILE" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { builder: "RAILPACK" } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.entries.some((e) => e.path === "build.builder")).toBe(true);
+  });
+
+  // --- Source ---
+
+  test("detects changed source image", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { source: { image: "nginx:latest" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { source: { image: "nginx:1.20" } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.entries.some((e) => e.path === "source.image")).toBe(true);
+  });
+
+  // --- Registry credentials ---
+
+  test("always includes registry credentials when desired has them", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          deploy: { registryCredentials: { username: "user", password: "pass" } },
         },
       },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
     });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      volumeMap: {
-        web: { volumeId: "vol-1", mount: "/data", name: "vol" },
-      },
-    });
-
-    const volDel = changeset.changes.find((c) => c.type === "delete-volume");
-    expect(volDel).toBeDefined();
-    if (volDel?.type === "delete-volume") {
-      expect(volDel?.volumeId).toBe("vol-1");
-      expect(volDel?.serviceName).toBe("web");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.entries.some((e) => e.path === "deploy.registryCredentials")).toBe(true);
   });
 
-  test("bucket diff — creates missing buckets", () => {
-    const desired = makeState({
-      buckets: {
-        "my-bucket": { id: "", name: "my-bucket" },
-      },
-    });
-    const current = makeState();
+  // --- Buckets ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-bucket");
-    expect(create).toBeDefined();
-    if (create?.type === "create-bucket") {
-      expect(create?.bucketName).toBe("my-bucket");
-    }
+  test("detects new bucket", () => {
+    const desired: EnvironmentConfig = {
+      buckets: { "bucket-1": { region: "iad" } },
+    };
+    const current: EnvironmentConfig = {};
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    expect(diff.entries.some((e) => e.category === "bucket" && e.action === "add")).toBe(true);
   });
 
-  test("bucket diff — no-op when bucket exists", () => {
-    const desired = makeState({
-      buckets: {
-        "my-bucket": { id: "", name: "my-bucket" },
-      },
-    });
-    const current = makeState({
-      buckets: {
-        "my-bucket": { id: "bucket-1", name: "my-bucket" },
-      },
-    });
+  // --- Source: autoUpdates ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const bucketChanges = changeset.changes.filter(
-      (c) => c.type === "create-bucket" || c.type === "delete-bucket",
+  test("detects added autoUpdates", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          source: {
+            image: "nginx",
+            autoUpdates: { type: "digest", schedule: [{ day: 1, startHour: 0, endHour: 6 }] },
+          },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { source: { image: "nginx" } } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "source.autoUpdates");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+    expect(entry?.serviceName).toBe("web");
+  });
+
+  test("detects updated autoUpdates", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          source: {
+            image: "nginx",
+            autoUpdates: { type: "digest", schedule: [{ day: 2, startHour: 0, endHour: 6 }] },
+          },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          source: {
+            image: "nginx",
+            autoUpdates: { type: "digest", schedule: [{ day: 1, startHour: 0, endHour: 6 }] },
+          },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "source.autoUpdates");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  test("detects removed autoUpdates", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { source: { image: "nginx" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          source: {
+            image: "nginx",
+            autoUpdates: { type: "digest", schedule: [{ day: 1, startHour: 0, endHour: 6 }] },
+          },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "source.autoUpdates");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("remove");
+  });
+
+  // --- Networking: domain update (port change) ---
+
+  test("detects domain update when port changes", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { customDomains: { "app.example.com": { port: 9090 } } },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { customDomains: { "app.example.com": { port: 8080 } } },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const domainEntries = diff.entries.filter((e) => e.category === "domain");
+    expect(domainEntries).toHaveLength(1);
+    expect(domainEntries[0].action).toBe("update");
+    expect(domainEntries[0].oldValue).toEqual({ port: 8080 });
+    expect(domainEntries[0].newValue).toEqual({ port: 9090 });
+  });
+
+  // --- Networking: privateNetworkEndpoint ---
+
+  test("detects added privateNetworkEndpoint", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc.internal" },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+    expect(entry?.newValue).toBe("svc.internal");
+  });
+
+  test("detects updated privateNetworkEndpoint", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc-new.internal" },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc-old.internal" },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  test("detects removed privateNetworkEndpoint", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": { networking: {} } },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc.internal" },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("remove");
+  });
+
+  // --- Build: normalizeEmpty and field comparisons ---
+
+  test("detects added dockerfilePath in build", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { dockerfilePath: "Dockerfile.prod" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { build: {} } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "build.dockerfilePath");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+    expect(entry?.newValue).toBe("Dockerfile.prod");
+  });
+
+  test("detects changed buildCommand in build", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { buildCommand: "npm run build:prod" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { buildCommand: "npm run build" } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "build.buildCommand");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  test("detects changed watchPatterns in build", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { watchPatterns: ["src/**", "package.json"] } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { watchPatterns: ["src/**"] } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "build.watchPatterns");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  test("treats null and undefined as equal in build fields (normalizeEmpty)", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { dockerfilePath: null } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: {} },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    // null in desired and undefined in current should both normalize to undefined — no diff
+    const entry = diff.entries.find((e) => e.path === "build.dockerfilePath");
+    expect(entry).toBeUndefined();
+  });
+
+  // --- Deploy: scalar field comparisons with normalizeEmpty ---
+
+  test("detects added deploy scalar field (healthcheckPath)", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { healthcheckPath: "/health" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { deploy: {} } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.healthcheckPath");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+  });
+
+  test("treats null and undefined as equal in deploy fields (normalizeEmpty)", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { cronSchedule: null } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: {} },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.cronSchedule");
+    expect(entry).toBeUndefined();
+  });
+
+  test("detects updated deploy scalar field (restartPolicyMaxRetries)", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { restartPolicyMaxRetries: 5 } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { restartPolicyMaxRetries: 3 } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.restartPolicyMaxRetries");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  // --- Deploy: multiRegionConfig ---
+
+  test("detects added multiRegionConfig", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          deploy: { multiRegionConfig: { "us-west1": { numReplicas: 2 } } },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { deploy: {} } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.multiRegionConfig");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+  });
+
+  test("detects updated multiRegionConfig", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          deploy: { multiRegionConfig: { "us-west1": { numReplicas: 3 } } },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          deploy: { multiRegionConfig: { "us-west1": { numReplicas: 2 } } },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.multiRegionConfig");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+  });
+
+  // --- Volume mount: add and update ---
+
+  test("detects added volume mount", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/data" } } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: { db: { name: "db", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "volumeMounts.vol-1");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+    expect(entry?.category).toBe("volume");
+    expect(entry?.newValue).toBe("/data");
+    expect(diff.hasDataLoss).toBe(false);
+  });
+
+  test("detects updated volume mount path", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/new-data" } } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/old-data" } } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: { db: { name: "db", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "volumeMounts.vol-1");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+    expect(entry?.oldValue).toBe("/old-data");
+    expect(entry?.newValue).toBe("/new-data");
+    expect(diff.hasDataLoss).toBe(false);
+  });
+
+  // --- configFile diff ---
+
+  test("detects added configFile", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": { configFile: "railway.toml" } },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "configFile");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
+    expect(entry?.newValue).toBe("railway.toml");
+  });
+
+  test("detects updated configFile", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": { configFile: "railway-new.toml" } },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { configFile: "railway-old.toml" } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "configFile");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
+    expect(entry?.oldValue).toBe("railway-old.toml");
+    expect(entry?.newValue).toBe("railway-new.toml");
+  });
+
+  test("detects removed configFile", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { configFile: "railway.toml" } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "configFile");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("remove");
+    expect(entry?.oldValue).toBe("railway.toml");
+  });
+
+  // --- emitNewServiceEntries ---
+
+  test("emits add entries for new service with image source", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-new": {
+          source: { image: "redis:7" },
+          variables: { PORT: { value: "6379" } },
+          networking: { customDomains: { "redis.example.com": { port: 6379 } } },
+        },
+      },
+    };
+    const current: EnvironmentConfig = {};
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-new", "redis"]]),
+      desiredState: makeState({
+        services: { redis: { name: "redis", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+
+    // Service add entry
+    const svcEntry = diff.entries.find((e) => e.path === "service" && e.action === "add");
+    expect(svcEntry).toBeDefined();
+    expect(svcEntry?.serviceName).toBe("redis");
+    expect(svcEntry?.newValue).toBe("redis:7");
+
+    // Variable add entries
+    const varEntries = diff.entries.filter(
+      (e) => e.category === "variable" && e.serviceName === "redis",
     );
-    expect(bucketChanges).toEqual([]);
-  });
+    expect(varEntries).toHaveLength(1);
+    expect(varEntries[0].action).toBe("add");
+    expect(varEntries[0].newValue).toBe("6379");
 
-  test("detects volume mount change (update in place)", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/new-data", name: "vol" },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    });
-
-    const volUpdate = changeset.changes.find((c) => c.type === "update-volume");
-    expect(volUpdate).toBeDefined();
-    if (volUpdate?.type === "update-volume") {
-      expect(volUpdate.mount).toBe("/new-data");
-      expect(volUpdate.volumeId).toBe("vol-1");
-    }
-    expect(changeset.changes.find((c) => c.type === "delete-volume")).toBeUndefined();
-    expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();
-  });
-
-  test("detects volume name change (update in place)", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "new-vol" },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    });
-
-    const volUpdate = changeset.changes.find((c) => c.type === "update-volume");
-    expect(volUpdate).toBeDefined();
-    if (volUpdate?.type === "update-volume") {
-      expect(volUpdate.name).toBe("new-vol");
-      expect(volUpdate.mount).toBeUndefined();
-    }
-    expect(changeset.changes.find((c) => c.type === "delete-volume")).toBeUndefined();
-    expect(changeset.changes.find((c) => c.type === "create-volume")).toBeUndefined();
-  });
-
-  test("detects volume name and mount change as single update", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/new-data", name: "new-vol" },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    });
-
-    const volUpdates = changeset.changes.filter((c) => c.type === "update-volume");
-    expect(volUpdates).toHaveLength(1);
-    if (volUpdates[0]?.type === "update-volume") {
-      expect(volUpdates[0].name).toBe("new-vol");
-      expect(volUpdates[0].mount).toBe("/new-data");
-    }
-  });
-
-  test("no volume change when volume matches", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      volumeMap: { web: { volumeId: "vol-1", mount: "/data", name: "vol" } },
-    });
-
-    const volChanges = changeset.changes.filter(
-      (c) => c.type === "delete-volume" || c.type === "create-volume",
+    // Domain add entries
+    const domainEntries = diff.entries.filter(
+      (e) => e.category === "domain" && e.serviceName === "redis",
     );
-    expect(volChanges).toEqual([]);
+    expect(domainEntries).toHaveLength(1);
+    expect(domainEntries[0].action).toBe("add");
   });
 
-  test("adds volume when desired has volume but current doesn't", () => {
-    const desired = makeState({
+  test("emits add entry for new service with repo source", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          volume: { mount: "/data", name: "vol" },
+        "svc-new": {
+          source: { repo: "github.com/user/repo" },
         },
       },
+    };
+    const current: EnvironmentConfig = {};
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-new", "api"]]),
+      desiredState: makeState({
+        services: { api: { name: "api", variables: {}, domains: [] } },
+      }),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-
-    const volCreate = changeset.changes.find((c) => c.type === "create-volume");
-    expect(volCreate).toBeDefined();
-    if (volCreate?.type === "create-volume") {
-      expect(volCreate.mount).toBe("/data");
-      expect(volCreate.name).toBe("vol");
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    const svcEntry = diff.entries.find((e) => e.path === "service" && e.action === "add");
+    expect(svcEntry).toBeDefined();
+    expect(svcEntry?.newValue).toBe("github.com/user/repo");
   });
 
-  test("removing healthcheck from config generates null clear", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          // No healthcheck in desired
-        },
-      },
+  test("emits add entry for new service with no source (empty)", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-new": {} },
+    };
+    const current: EnvironmentConfig = {};
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-new", "worker"]]),
+      desiredState: makeState({
+        services: { worker: { name: "worker", variables: {}, domains: [] } },
+      }),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          healthcheck: { path: "/health", timeout: 300 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.healthcheck).toBeNull();
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    const svcEntry = diff.entries.find((e) => e.path === "service" && e.action === "add");
+    expect(svcEntry).toBeDefined();
+    expect(svcEntry?.newValue).toBe("empty");
   });
 
-  test("removing restartPolicy from config skips diff but warns", () => {
-    const warnings: string[] = [];
-    logger.mockTypes((type) =>
-      type === "warn"
-        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
-        : () => {},
+  // --- Service deletion entry in entries array ---
+
+  test("adds remove entry to entries array when deleting service", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "old-service"]]),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToDelete).toHaveLength(1);
+    const entry = diff.entries.find(
+      (e) => e.path === "service" && e.action === "remove" && e.serviceName === "old-service",
     );
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          restartPolicy: "ALWAYS",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeUndefined();
-    expect(warnings.some((w) => w.includes("restart_policy") && w.includes("ALWAYS"))).toBe(true);
-    logger.restoreAll();
+    expect(entry).toBeDefined();
+    expect(entry?.category).toBe("service");
   });
 
-  test("removing restartPolicyMaxRetries from config skips diff and warns (even when 0)", () => {
-    const warnings: string[] = [];
-    logger.mockTypes((type) =>
-      type === "warn"
-        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
-        : () => {},
-    );
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          restartPolicyMaxRetries: 0,
-        },
-      },
-    });
+  // --- Volumes to create ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeUndefined();
-    expect(warnings.some((w) => w.includes("restart_policy_max_retries"))).toBe(true);
-    logger.restoreAll();
+  test("detects volume to create when service has volume but no volumeMount", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": {},
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {},
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: {
+          db: {
+            name: "db",
+            variables: {},
+            domains: [],
+            volume: { mount: "/data", name: "db-data" },
+          },
+        },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.volumesToCreate).toHaveLength(1);
+    expect(diff.volumesToCreate[0].serviceName).toBe("db");
+    expect(diff.volumesToCreate[0].serviceId).toBe("svc-1");
+    expect(diff.volumesToCreate[0].mount).toBe("/data");
+    expect(diff.volumesToCreate[0].name).toBe("db-data");
   });
 
-  test("removing source from config generates null clear", () => {
-    const desired = makeState({
+  test("does not create volume when current already has volumeMount", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
+        "svc-1": {},
       },
-    });
-    const current = makeState({
+    };
+    const current: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          source: { image: "nginx:latest" },
-        },
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/data" } } },
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: {
+          db: {
+            name: "db",
+            variables: {},
+            domains: [],
+            volume: { mount: "/data", name: "db-data" },
+          },
+        },
+      }),
     });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.source).toBeNull();
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.volumesToCreate).toHaveLength(0);
   });
 
-  test("removing cronSchedule from config generates null clear", () => {
-    const desired = makeState({
+  test("does not create volume when desired config already has volumeMount", () => {
+    const desired: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/data" } } },
       },
-    });
-    const current = makeState({
+    };
+    const current: EnvironmentConfig = {
       services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          cronSchedule: "*/5 * * * *",
-        },
+        "svc-1": {},
       },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+      desiredState: makeState({
+        services: {
+          db: {
+            name: "db",
+            variables: {},
+            domains: [],
+            volume: { mount: "/data", name: "db-data" },
+          },
+        },
+      }),
     });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.cronSchedule).toBeNull();
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.volumesToCreate).toHaveLength(0);
   });
 
-  test("removing startCommand from config generates null clear", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
+  test("does not create volume for new service (no serviceId)", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {};
+    const ctx = makeCtx({
+      desiredState: makeState({
+        services: {
+          db: {
+            name: "db",
+            variables: {},
+            domains: [],
+            volume: { mount: "/data", name: "db-data" },
+          },
         },
-      },
+      }),
     });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          startCommand: "npm start",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.startCommand).toBeNull();
-    }
+    const diff = computeConfigDiff(desired, current, ctx);
+    // Volume creation for new service is handled during service creation, not separately
+    expect(diff.volumesToCreate).toHaveLength(0);
   });
 
-  test("removing region from config generates null clear", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          region: { region: "us-east-1", numReplicas: 1 },
-        },
-      },
-    });
+  // --- Build: buildEnvironment field ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.region).toBeNull();
-    }
+  test("detects changed buildEnvironment in build", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { buildEnvironment: "production" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { build: { buildEnvironment: "staging" } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "build.buildEnvironment");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
   });
 
-  test("no changes when both desired and current lack optional fields", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
+  // --- Deploy: preDeployCommand ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
+  test("detects added preDeployCommand", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { preDeployCommand: "npm run migrate" } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { deploy: {} } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.preDeployCommand");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("add");
   });
 
-  test("detects dockerfilePath change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          dockerfilePath: "Dockerfile.prod",
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          dockerfilePath: "Dockerfile",
-        },
-      },
-    });
+  // --- Deploy: sleepApplication, drainingSeconds, overlapSeconds ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.dockerfilePath).toBe("Dockerfile.prod");
-    }
+  test("detects changed sleepApplication", () => {
+    const desired: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { sleepApplication: true } },
+      },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { deploy: { sleepApplication: false } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.sleepApplication");
+    expect(entry).toBeDefined();
+    expect(entry?.action).toBe("update");
   });
 
-  test("preDeployCommand compared as array with deepEqual", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          preDeployCommand: ["npm run migrate"],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          preDeployCommand: ["npm run migrate"],
-        },
-      },
-    });
+  // --- Enrichment: default values match (no spurious diff) ---
 
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
+  test("does not diff default restartPolicyType when both sides are default", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { deploy: { restartPolicyType: "ON_FAILURE" } } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "deploy.restartPolicyType");
+    expect(entry).toBeUndefined();
   });
 
-  test("preDeployCommand change detected when arrays differ", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          preDeployCommand: ["npm run migrate", "npm run seed"],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          preDeployCommand: ["npm run migrate"],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.preDeployCommand).toEqual(["npm run migrate", "npm run seed"]);
-    }
-  });
-
-  test("new service includes settings in update-service-settings change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          variables: {},
-          domains: [],
-          source: { image: "nginx:latest" },
-          startCommand: "npm start",
-          buildCommand: "npm run build",
-          restartPolicy: "ON_FAILURE",
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-service");
-    expect(create).toBeDefined();
-
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update?.settings.startCommand).toBe("npm start");
-      expect(update?.settings.buildCommand).toBe("npm run build");
-      expect(update?.settings.restartPolicy).toBe("ON_FAILURE");
-      expect(update?.serviceId).toBe(""); // Resolved at apply time
-    }
-  });
-
-  test("detects new service settings changes (startCommand, buildCommand, etc.)", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          startCommand: "npm start",
-          buildCommand: "npm run build",
-          rootDirectory: "/app",
-          sleepApplication: true,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update?.settings.startCommand).toBe("npm start");
-      expect(update?.settings.buildCommand).toBe("npm run build");
-      expect(update?.settings.rootDirectory).toBe("/app");
-      expect(update?.settings.sleepApplication).toBe(true);
-    }
-  });
-
-  // --- Group 1: Scalar settings ---
-
-  test("builder change detected", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          builder: "NIXPACKS",
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          builder: "DOCKERFILE",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.builder).toBe("NIXPACKS");
-    }
-  });
-
-  test("watchPatterns change detected (uses deepEqual)", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          watchPatterns: ["src/**", "package.json"],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          watchPatterns: ["src/**"],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.watchPatterns).toEqual(["src/**", "package.json"]);
-    }
-  });
-
-  test("drainingSeconds change detected", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          drainingSeconds: 60,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          drainingSeconds: 30,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.drainingSeconds).toBe(60);
-    }
-  });
-
-  test("overlapSeconds change detected", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          overlapSeconds: 10,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          overlapSeconds: 5,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.overlapSeconds).toBe(10);
-    }
-  });
-
-  test("ipv6EgressEnabled change detected", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          ipv6EgressEnabled: true,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          ipv6EgressEnabled: false,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.ipv6EgressEnabled).toBe(true);
-    }
-  });
-
-  test("removing nullable fields clears them, non-nullable fields are skipped with warning", () => {
-    const warnings: string[] = [];
-    logger.mockTypes((type) =>
-      type === "warn"
-        ? (...args: unknown[]) => warnings.push(args.map(String).join(" "))
-        : () => {},
-    );
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          builder: "NIXPACKS",
-          watchPatterns: ["src/**"],
-          drainingSeconds: 30,
-          overlapSeconds: 5,
-          ipv6EgressEnabled: true,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      // Non-nullable fields (builder, watchPatterns) should NOT be in settings
-      expect(update.settings.builder).toBeUndefined();
-      expect(update.settings.watchPatterns).toBeUndefined();
-      // Nullable fields should be cleared
-      expect(update.settings.drainingSeconds).toBeNull();
-      expect(update.settings.overlapSeconds).toBeNull();
-      expect(update.settings.ipv6EgressEnabled).toBeNull();
-    }
-    // Warnings should fire for non-nullable fields
-    expect(warnings.some((w) => w.includes("builder"))).toBe(true);
-    expect(warnings.some((w) => w.includes("watch_patterns"))).toBe(true);
-    logger.restoreAll();
-  });
-
-  // --- Group 2: Branch ---
-
-  test("new service with branch includes it in create-service change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { repo: "myorg/myrepo" },
-          variables: {},
-          domains: [],
-          branch: "develop",
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-service");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service") {
-      expect(create.branch).toBe("develop");
-    }
-  });
-
-  test("existing service with changed branch generates update-deployment-trigger", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { repo: "myorg/myrepo" },
-          variables: {},
-          domains: [],
-          branch: "staging",
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { repo: "myorg/myrepo" },
-          variables: {},
-          domains: [],
-          branch: "main",
-          deploymentTriggerId: "trigger-1",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
-    expect(trigger).toBeDefined();
-    if (trigger?.type === "update-deployment-trigger") {
-      expect(trigger.branch).toBe("staging");
-      expect(trigger.serviceId).toBe("svc-1");
-      expect(trigger.triggerId).toBe("trigger-1");
-    }
-  });
-
-  test("no change when branch matches", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { repo: "myorg/myrepo" },
-          variables: {},
-          domains: [],
-          branch: "main",
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { repo: "myorg/myrepo" },
-          variables: {},
-          domains: [],
-          branch: "main",
-          deploymentTriggerId: "trigger-1",
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const trigger = changeset.changes.find((c) => c.type === "update-deployment-trigger");
-    expect(trigger).toBeUndefined();
-  });
-
-  // --- Group 3: Registry credentials ---
-
-  test("new service with registryCredentials includes it in create-service", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          source: { image: "registry.example.com/app:latest" },
-          variables: {},
-          domains: [],
-          registryCredentials: { username: "user", password: "pass" },
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-service");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service") {
-      expect(create.registryCredentials).toEqual({ username: "user", password: "pass" });
-    }
-    // registryCredentials should NOT be duplicated in update-service-settings for new services
-    const settingsWithCreds = changeset.changes.filter(
-      (c) => c.type === "update-service-settings" && c.settings.registryCredentials !== undefined,
-    );
-    expect(settingsWithCreds).toHaveLength(0);
-  });
-
-  test("existing service with registryCredentials always generates settings update", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "registry.example.com/app:latest" },
-          variables: {},
-          domains: [],
-          registryCredentials: { username: "user", password: "pass" },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "registry.example.com/app:latest" },
-          variables: {},
-          domains: [],
-          // registryCredentials not in current state (can't be read back from API)
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.registryCredentials).toEqual({ username: "user", password: "pass" });
-    }
-  });
-
-  test("no change when registryCredentials absent from both", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          source: { image: "nginx:latest" },
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    expect(changeset.changes).toEqual([]);
-  });
-
-  // --- Group 4A: Domains ---
-
-  test("domain with targetPort creates domain with targetPort", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "app.example.com", targetPort: 8080 }],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const dom = changeset.changes.find((c) => c.type === "create-domain");
-    expect(dom).toBeDefined();
-    if (dom?.type === "create-domain") {
-      expect(dom.domain).toBe("app.example.com");
-      expect(dom.targetPort).toBe(8080);
-    }
-  });
-
-  test("domain targetPort change generates update-domain", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "app.example.com", targetPort: 9090 }],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [{ domain: "app.example.com", targetPort: 8080 }],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: { web: [{ id: "dom-1", domain: "app.example.com", targetPort: 8080 }] },
-    });
-
-    const update = changeset.changes.find((c) => c.type === "update-domain");
-    expect(update).toBeDefined();
-    if (update?.type === "update-domain") {
-      expect(update.domain).toBe("app.example.com");
-      expect(update.domainId).toBe("dom-1");
-      expect(update.targetPort).toBe(9090);
-    }
-    expect(changeset.changes.find((c) => c.type === "delete-domain")).toBeUndefined();
-    expect(changeset.changes.find((c) => c.type === "create-domain")).toBeUndefined();
-  });
-
-  test("railway domain: desired has railway_domain, current doesn't → create-service-domain", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 3000 },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const create = changeset.changes.find((c) => c.type === "create-service-domain");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service-domain") {
-      expect(create.serviceName).toBe("web");
-      expect(create.targetPort).toBe(3000);
-    }
-  });
-
-  test("railway domain: desired doesn't, current has one → delete-service-domain", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 3000 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      serviceDomainMap: { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
-    });
-    const del = changeset.changes.find((c) => c.type === "delete-service-domain");
-    expect(del).toBeDefined();
-    if (del?.type === "delete-service-domain") {
-      expect(del.serviceName).toBe("web");
-      expect(del.domainId).toBe("sdom-1");
-    }
-  });
-
-  test("railway domain: both have → no change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 3000 },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 3000 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      serviceDomainMap: { web: { id: "sdom-1", domain: "web-production.up.railway.app" } },
-    });
-    const serviceDomainChanges = changeset.changes.filter(
-      (c) => c.type === "create-service-domain" || c.type === "delete-service-domain",
-    );
-    expect(serviceDomainChanges).toEqual([]);
-  });
-
-  // --- Group 4B: TCP proxies ---
-
-  test("desired has tcp ports, current doesn't → create-tcp-proxy for each", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          tcpProxies: [5432, 6379],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      tcpProxyMap: {},
-    });
-    const creates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
-    expect(creates.length).toBe(2);
-    const ports = creates.map((c) => (c as { applicationPort: number }).applicationPort).sort();
-    expect(ports).toEqual([5432, 6379]);
-  });
-
-  test("current has tcp ports, desired doesn't → delete-tcp-proxy for each", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          tcpProxies: [5432, 6379],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      tcpProxyMap: {
-        web: [
-          { id: "tcp-1", applicationPort: 5432 },
-          { id: "tcp-2", applicationPort: 6379 },
-        ],
-      },
-    });
-    const deletes = changeset.changes.filter((c) => c.type === "delete-tcp-proxy");
-    expect(deletes.length).toBe(2);
-    const proxyIds = deletes.map((c) => (c as { proxyId: string }).proxyId).sort();
-    expect(proxyIds).toEqual(["tcp-1", "tcp-2"]);
-  });
-
-  test("mixed tcp proxies: some to create, some to delete, some matching", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          tcpProxies: [5432, 8080],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          tcpProxies: [5432, 6379],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      tcpProxyMap: {
-        web: [
-          { id: "tcp-1", applicationPort: 5432 },
-          { id: "tcp-2", applicationPort: 6379 },
-        ],
-      },
-    });
-
-    // 8080 should be created
-    const creates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
-    expect(creates.length).toBe(1);
-    if (creates[0].type === "create-tcp-proxy") {
-      expect(creates[0].applicationPort).toBe(8080);
-    }
-
-    // 6379 should be deleted
-    const deletes = changeset.changes.filter((c) => c.type === "delete-tcp-proxy");
-    expect(deletes.length).toBe(1);
-    if (deletes[0].type === "delete-tcp-proxy") {
-      expect(deletes[0].proxyId).toBe("tcp-2");
-    }
-  });
-
-  // --- Group 4C: Resource limits ---
-
-  test("limits change detected → update-service-limits", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          limits: { memoryGB: 4, vCPUs: 2 },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          limits: { memoryGB: 2, vCPUs: 1 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-limits");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-limits") {
-      expect(update.limits.memoryGB).toBe(4);
-      expect(update.limits.vCPUs).toBe(2);
-    }
-  });
-
-  test("no change when limits match", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          limits: { memoryGB: 2, vCPUs: 1 },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          limits: { memoryGB: 2, vCPUs: 1 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const limitsChanges = changeset.changes.filter((c) => c.type === "update-service-limits");
-    expect(limitsChanges).toEqual([]);
-  });
-
-  test("limits removal generates update-service-limits", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          limits: { memoryGB: 4, vCPUs: 2 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-limits");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-limits") {
-      expect(update.limits.memoryGB).toBeNull();
-      expect(update.limits.vCPUs).toBeNull();
-    }
-  });
-
-  // --- New service creation with all new features ---
-
-  test("new service with all new features generates correct changes", () => {
-    const desired = makeState({
-      services: {
-        api: {
-          name: "api",
-          source: { image: "registry.example.com/api:latest" },
-          variables: { PORT: "3000" },
-          domains: [{ domain: "api.example.com", targetPort: 3000 }],
-          branch: "main",
-          registryCredentials: { username: "user", password: "pass" },
-          railwayDomain: { targetPort: 3000 },
-          tcpProxies: [5432, 6379],
-          limits: { memoryGB: 4, vCPUs: 2 },
-          staticOutboundIps: true,
-          builder: "NIXPACKS",
-          watchPatterns: ["src/**"],
-          drainingSeconds: 30,
-          overlapSeconds: 5,
-          ipv6EgressEnabled: true,
-        },
-      },
-    });
-    const current = makeState();
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-
-    // create-service with branch and registryCredentials
-    const create = changeset.changes.find((c) => c.type === "create-service");
-    expect(create).toBeDefined();
-    if (create?.type === "create-service") {
-      expect(create.branch).toBe("main");
-      expect(create.registryCredentials).toEqual({ username: "user", password: "pass" });
-    }
-
-    // variables
-    const vars = changeset.changes.find((c) => c.type === "upsert-variables");
-    expect(vars).toBeDefined();
-
-    // custom domain with targetPort
-    const dom = changeset.changes.find((c) => c.type === "create-domain");
-    expect(dom).toBeDefined();
-    if (dom?.type === "create-domain") {
-      expect(dom.domain).toBe("api.example.com");
-      expect(dom.targetPort).toBe(3000);
-    }
-
-    // railway domain
-    const sdom = changeset.changes.find((c) => c.type === "create-service-domain");
-    expect(sdom).toBeDefined();
-    if (sdom?.type === "create-service-domain") {
-      expect(sdom.targetPort).toBe(3000);
-    }
-
-    // TCP proxies
-    const tcpCreates = changeset.changes.filter((c) => c.type === "create-tcp-proxy");
-    expect(tcpCreates.length).toBe(2);
-    const tcpPorts = tcpCreates
-      .map((c) => (c as { applicationPort: number }).applicationPort)
-      .sort();
-    expect(tcpPorts).toEqual([5432, 6379]);
-
-    // update-service-settings with new scalar settings and registryCredentials
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.builder).toBe("NIXPACKS");
-      expect(update.settings.watchPatterns).toEqual(["src/**"]);
-      expect(update.settings.drainingSeconds).toBe(30);
-      expect(update.settings.overlapSeconds).toBe(5);
-      expect(update.settings.ipv6EgressEnabled).toBe(true);
-      // registryCredentials already in create-service, not duplicated here
-      expect(update.settings.registryCredentials).toBeUndefined();
-    }
-
-    // limits for new services
-    const limitsChange = changeset.changes.find((c) => c.type === "update-service-limits");
-    expect(limitsChange).toBeDefined();
-
-    // static outbound IPs for new services
-    const staticIps = changeset.changes.find((c) => c.type === "enable-static-ips");
-    expect(staticIps).toBeDefined();
-  });
-
-  test("branch change without deployment trigger emits no change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          branch: "develop",
-          // No deploymentTriggerId — image-based service
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const triggerChanges = changeset.changes.filter((c) => c.type === "update-deployment-trigger");
-    expect(triggerChanges).toHaveLength(0);
-  });
-
-  test("service domain targetPort change generates update-service-domain", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 8080 },
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayDomain: { targetPort: 3000 },
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], {
-      domainMap: {},
-      serviceDomainMap: { web: { id: "svcdom-1", domain: "web.up.railway.app" } },
-    });
-
-    const update = changeset.changes.find((c) => c.type === "update-service-domain");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-domain") {
-      expect(update.targetPort).toBe(8080);
-      expect(update.domainId).toBe("svcdom-1");
-      expect(update.domain).toBe("web.up.railway.app");
-    }
-    expect(changeset.changes.find((c) => c.type === "delete-service-domain")).toBeUndefined();
-    expect(changeset.changes.find((c) => c.type === "create-service-domain")).toBeUndefined();
-  });
-
-  test("disable-static-ips when current has it but desired doesn't", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          // No staticOutboundIps
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          staticOutboundIps: true,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const disable = changeset.changes.find((c) => c.type === "disable-static-ips");
-    expect(disable).toBeDefined();
-  });
-
-  test("enable-static-ips when desired has it but current doesn't", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          staticOutboundIps: true,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const enable = changeset.changes.find((c) => c.type === "enable-static-ips");
-    expect(enable).toBeDefined();
-  });
-
-  test("detects restartPolicyMaxRetries change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          restartPolicyMaxRetries: 5,
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          restartPolicyMaxRetries: 10,
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.restartPolicyMaxRetries).toBe(5);
-    }
-  });
-
-  test("detects railwayConfigFile change", () => {
-    const desired = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-          railwayConfigFile: "railway.toml",
-        },
-      },
-    });
-    const current = makeState({
-      services: {
-        web: {
-          name: "web",
-          id: "svc-1",
-          variables: {},
-          domains: [],
-        },
-      },
-    });
-
-    const changeset = computeChangeset(desired, current, {}, [], { domainMap: {} });
-    const update = changeset.changes.find((c) => c.type === "update-service-settings");
-    expect(update).toBeDefined();
-    if (update?.type === "update-service-settings") {
-      expect(update.settings.railwayConfigFile).toBe("railway.toml");
-    }
+  test("does not diff default builder when both sides are default", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": { build: { builder: "RAILPACK" } } },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "build.builder");
+    expect(entry).toBeUndefined();
   });
 });

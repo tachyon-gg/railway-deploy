@@ -8,8 +8,9 @@ import type {
   ServiceEntry,
   ServiceEnvironmentOverride,
   ServiceTemplate,
+  SharedVariableEntry,
 } from "../types/config.js";
-import type { ServiceState, State } from "../types/state.js";
+import type { BucketState, ServiceState, State, VolumeState } from "../types/state.js";
 import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
 import { expandParamsDeep, resolveParams } from "./params.js";
 import {
@@ -94,23 +95,27 @@ export function mergeServiceEntry(
 /**
  * Resolve shared variables for a target environment.
  *
- * Merges `defaults` with the target environment's overrides from `environments`.
+ * Supports two formats:
+ * - Simple string: same value for all environments
+ * - Object with value + environments: default value with per-env overrides
  */
 function resolveSharedVariables(
-  sharedVars:
-    | {
-        defaults?: Record<string, string | null>;
-        environments?: Record<string, Record<string, string | null>>;
-      }
-    | undefined,
+  sharedVars: Record<string, SharedVariableEntry> | undefined,
   targetEnvironment: string,
 ): Record<string, string | null> {
   if (!sharedVars) return {};
 
-  const defaults = sharedVars.defaults ?? {};
-  const overrides = sharedVars.environments?.[targetEnvironment] ?? {};
-
-  return { ...defaults, ...overrides };
+  const result: Record<string, string | null> = {};
+  for (const [key, entry] of Object.entries(sharedVars)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    } else {
+      // Check for per-env override
+      const envOverride = entry.environments?.[targetEnvironment];
+      result[key] = envOverride?.value ?? entry.value;
+    }
+  }
+  return result;
 }
 
 /**
@@ -146,6 +151,19 @@ function getServicesForEnvironment(
     }
   }
   return result;
+}
+
+/**
+ * Resolve a top-level entry with per-env overrides by merging defaults with the target env.
+ */
+function mergeWithEnvOverride<T extends Record<string, unknown>>(
+  defaults: T & { environments?: Record<string, Partial<T>> },
+  targetEnvironment: string,
+): Omit<T, "environments"> {
+  const { environments, ...base } = defaults;
+  const override = environments?.[targetEnvironment];
+  if (!override) return base;
+  return { ...base, ...override };
 }
 
 /**
@@ -227,11 +245,40 @@ export function loadProjectConfig(
     }
   }
 
-  // Parse buckets from config
-  const buckets: Record<string, { id: string; name: string }> = {};
+  // Resolve volumes for this environment
+  const volumes: Record<string, VolumeState> = {};
+  if (config.volumes) {
+    for (const [key, volEntry] of Object.entries(config.volumes)) {
+      const resolved = mergeWithEnvOverride(volEntry, targetEnvironment);
+      volumes[key] = {
+        ...(resolved.size_mb !== undefined ? { sizeMB: resolved.size_mb } : {}),
+        ...(resolved.region ? { region: resolved.region } : {}),
+      };
+    }
+  }
+
+  // Validate volume references — every service volume.name must reference a declared volume
+  if (config.volumes) {
+    const declaredVolumes = new Set(Object.keys(config.volumes));
+    for (const [name, svc] of Object.entries(services)) {
+      if (svc.volume && !declaredVolumes.has(svc.volume.name)) {
+        throw new Error(
+          `Service "${name}" references volume "${svc.volume.name}" which is not declared in 'volumes:'.`,
+        );
+      }
+    }
+  }
+
+  // Resolve buckets for this environment
+  const buckets: Record<string, BucketState> = {};
   if (config.buckets) {
-    for (const [key, bucket] of Object.entries(config.buckets)) {
-      buckets[key] = { id: "", name: bucket.name };
+    for (const [key, bucketEntry] of Object.entries(config.buckets)) {
+      const resolved = mergeWithEnvOverride(bucketEntry, targetEnvironment);
+      buckets[key] = {
+        id: "",
+        name: key,
+        ...(resolved.region ? { region: resolved.region } : {}),
+      };
     }
   }
 
@@ -241,6 +288,7 @@ export function loadProjectConfig(
       environmentId: "",
       sharedVariables: resolvedSharedVars,
       services,
+      volumes,
       buckets,
     },
     deletedVars,
@@ -308,7 +356,7 @@ function resolveService(
   const source = pick(entry.source, template?.source);
   const volume = pick(entry.volume, template?.volume);
   const region = pick(entry.region, template?.region);
-  const restartPolicy = pick(entry.restart_policy, template?.restart_policy);
+  const restartPolicyRaw = pick(entry.restart_policy, template?.restart_policy);
   const healthcheck = pick(entry.healthcheck, template?.healthcheck);
   const cronSchedule = pick(entry.cron_schedule, template?.cron_schedule);
   const startCommand = pick(entry.start_command, template?.start_command);
@@ -316,22 +364,33 @@ function resolveService(
   const rootDirectory = pick(entry.root_directory, template?.root_directory);
   const dockerfilePath = pick(entry.dockerfile_path, template?.dockerfile_path);
   const preDeployCommand = pick(entry.pre_deploy_command, template?.pre_deploy_command);
-  const restartPolicyMaxRetries =
-    entry.restart_policy_max_retries ?? template?.restart_policy_max_retries;
-  const sleepApplication = entry.sleep_application ?? template?.sleep_application;
+  // Parse restart_policy: string shorthand or object form
+  let restartPolicy: string | undefined;
+  let restartPolicyMaxRetries: number | undefined;
+  if (typeof restartPolicyRaw === "string") {
+    restartPolicy = restartPolicyRaw;
+  } else if (restartPolicyRaw) {
+    restartPolicy = restartPolicyRaw.type;
+    if (restartPolicyRaw.max_retries !== undefined)
+      restartPolicyMaxRetries = restartPolicyRaw.max_retries;
+  }
+  const serverless = entry.serverless ?? template?.serverless;
   const builder = pick(entry.builder, template?.builder);
   const watchPatterns = pick(entry.watch_patterns, template?.watch_patterns);
   const drainingSeconds = entry.draining_seconds ?? template?.draining_seconds;
   const overlapSeconds = entry.overlap_seconds ?? template?.overlap_seconds;
   const ipv6Egress = entry.ipv6_egress ?? template?.ipv6_egress;
   const branch = pick(entry.branch, template?.branch);
-  const checkSuites = entry.check_suites ?? template?.check_suites;
+  const waitForCi = entry.wait_for_ci ?? template?.wait_for_ci;
   const registryCredentials = entry.registry_credentials ?? template?.registry_credentials;
   const railwayDomain = entry.railway_domain ?? template?.railway_domain;
   const tcpProxies = entry.tcp_proxies ?? template?.tcp_proxies;
   const limits = entry.limits ?? template?.limits;
   const railwayConfigFile = pick(entry.railway_config_file, template?.railway_config_file);
   const staticOutboundIps = entry.static_outbound_ips ?? template?.static_outbound_ips;
+  const privateHostname = pick(entry.private_hostname, template?.private_hostname);
+  const autoUpdates = entry.auto_updates ?? template?.auto_updates;
+  const metal = entry.metal ?? template?.metal;
 
   // Normalize domains: entry domains override template domains if specified
   let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
@@ -375,7 +434,7 @@ function resolveService(
   };
 
   if (source) service.source = source;
-  if (volume) service.volume = { mount: volume.mount, name: volume.name };
+  if (volume) service.volume = { name: volume.name, mount: volume.mount };
   if (region) {
     service.region = {
       region: region.region,
@@ -400,14 +459,14 @@ function resolveService(
   }
   if (restartPolicyMaxRetries !== undefined)
     service.restartPolicyMaxRetries = restartPolicyMaxRetries;
-  if (sleepApplication !== undefined) service.sleepApplication = sleepApplication;
+  if (serverless !== undefined) service.serverless = serverless;
   if (builder) service.builder = builder;
   if (watchPatterns) service.watchPatterns = watchPatterns;
   if (drainingSeconds !== undefined) service.drainingSeconds = drainingSeconds;
   if (overlapSeconds !== undefined) service.overlapSeconds = overlapSeconds;
   if (ipv6Egress !== undefined) service.ipv6EgressEnabled = ipv6Egress;
   if (branch) service.branch = branch;
-  if (checkSuites !== undefined) service.checkSuites = checkSuites;
+  if (waitForCi !== undefined) service.waitForCi = waitForCi;
   if (registryCredentials) {
     service.registryCredentials = {
       username: resolveEnvVarString(registryCredentials.username, process.env, lenient),
@@ -431,6 +490,18 @@ function resolveService(
   }
   if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
   if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
+  if (privateHostname) service.privateHostname = privateHostname;
+  if (autoUpdates) {
+    service.autoUpdates = {
+      type: autoUpdates.type,
+      schedule: autoUpdates.schedule.map((s) => ({
+        day: s.day,
+        startHour: s.start_hour,
+        endHour: s.end_hour,
+      })),
+    };
+  }
+  if (metal !== undefined) service.metal = metal;
 
   // Validate resolved values (after param expansion)
   validateResolvedService(name, service);

@@ -87,11 +87,12 @@ async function run(
 }
 
 describe("CLI", () => {
-  test("--help shows usage", async () => {
+  test("--help shows usage including --stage", async () => {
     const { stdout, exitCode } = await run(["--help"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("railway-deploy");
     expect(stdout).toContain("--apply");
+    expect(stdout).toContain("--stage");
     expect(stdout).toContain("--environment");
   });
 
@@ -130,6 +131,15 @@ describe("CLI", () => {
     });
     expect(exitCode).toBe(1);
     expect(stderr).toContain("--environment");
+  });
+
+  test("--apply and --stage are mutually exclusive", async () => {
+    const { stderr, exitCode } = await run(
+      [join(FIXTURE_DIR, "valid.yaml"), "-e", "alpha", "--apply", "--stage"],
+      { RAILWAY_TOKEN: "dummy" },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("mutually exclusive");
   });
 
   test("nonexistent config file exits 1", async () => {
