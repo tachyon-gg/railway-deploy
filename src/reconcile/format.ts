@@ -162,7 +162,9 @@ function formatEntryLabel(entry: ConfigDiffEntry, verbose: boolean): string {
     }
 
     case "setting": {
-      const field = pathParts.slice(pathParts.indexOf("deploy") >= 0 ? 1 : 0).join(".");
+      const knownPrefixes = ["deploy.", "build.", "source.", "networking."];
+      const prefix = knownPrefixes.find((p) => entry.path.startsWith(p));
+      const field = prefix ? entry.path.slice(prefix.length) : entry.path;
       if (verbose && entry.oldValue !== undefined) {
         if (isSensitive(field)) return `${field}: ***`;
         const oldStr = entry.oldValue !== undefined ? JSON.stringify(entry.oldValue) : "(unset)";

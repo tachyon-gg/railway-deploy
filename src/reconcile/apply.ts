@@ -24,7 +24,7 @@ import {
 import type { ConfigDiff } from "../types/changeset.js";
 import type { EnvironmentConfig } from "../types/envconfig.js";
 import type { State } from "../types/state.js";
-import { buildNewServiceConfig } from "./config.js";
+import { buildServiceConfig } from "./config.js";
 import type { ApplyResult } from "./format.js";
 
 /**
@@ -129,7 +129,7 @@ export async function applyConfigDiff(
           }
         }
 
-        desiredConfig.services[created.id] = buildNewServiceConfig(svcState, volumeId);
+        desiredConfig.services[created.id] = buildServiceConfig(svcState, volumeId);
       }
     } catch (err) {
       result.errors.push({
@@ -138,6 +138,9 @@ export async function applyConfigDiff(
       });
     }
   }
+
+  // Track volume IDs created in Step 2 for cleanup on stage failure
+  const createdVolumeIds: Array<{ id: string; serviceName: string }> = [];
 
   // Step 2: Create volumes for existing services that need new volumes
   for (const vol of diff.volumesToCreate) {
@@ -152,6 +155,7 @@ export async function applyConfigDiff(
       if (vol.name && created.name !== vol.name) {
         await updateVolume(client, created.id, vol.name);
       }
+      createdVolumeIds.push({ id: created.id, serviceName: vol.serviceName });
       result.volumesCreated.push(vol.serviceName);
       logger.success(`Created volume for ${vol.serviceName}: ${vol.mount}`);
 
@@ -169,8 +173,14 @@ export async function applyConfigDiff(
     }
   }
 
-  // Step 2.5: Enrich desired config with nulls for removed items
-  // merge:true only adds/updates — to delete, we must explicitly set null
+  // Step 2.5: Null-inject removed collection items
+  //
+  // Settings (deploy.*, build.*, source.*, configFile, networking scalars) are
+  // already nulled by the config builder — no injection needed here.
+  //
+  // Collections (variables, shared vars, custom domains, TCP proxies, volume mounts)
+  // are keyed by dynamic names/IDs, so we must explicitly null removed items
+  // because merge:true only adds/updates — it won't delete omitted keys.
   for (const entry of diff.entries) {
     if (entry.action !== "remove") continue;
 
@@ -192,6 +202,10 @@ export async function applyConfigDiff(
     } else if (entry.category === "domain" && entry.serviceName && serviceNameToId) {
       const svcId = serviceNameToId.get(entry.serviceName);
       if (svcId && desiredConfig.services?.[svcId]) {
+        if (entry.path === "networking.serviceDomains") {
+          // Railway domain removal — already nulled by config builder
+          continue;
+        }
         const prefix = "networking.customDomains.";
         const domainName = entry.path.startsWith(prefix)
           ? entry.path.slice(prefix.length)
@@ -201,46 +215,6 @@ export async function applyConfigDiff(
           svcCfg.networking = svcCfg.networking || {};
           svcCfg.networking.customDomains = svcCfg.networking.customDomains || {};
           (svcCfg.networking.customDomains as Record<string, unknown>)[domainName] = null;
-        }
-      }
-    } else if (entry.category === "setting" && entry.serviceName && serviceNameToId) {
-      // Settings removed from config need explicit nulling in the patch
-      const svcId = serviceNameToId.get(entry.serviceName);
-      if (svcId && desiredConfig.services?.[svcId]) {
-        const svcCfg = desiredConfig.services[svcId];
-        const path = entry.path;
-        if (path === "configFile") {
-          (svcCfg as Record<string, unknown>).configFile = null;
-        } else if (path === "source.autoUpdates") {
-          svcCfg.source = svcCfg.source || {};
-          (svcCfg.source as Record<string, unknown>).autoUpdates = null;
-        } else if (path.startsWith("networking.tcpProxies.")) {
-          const port = path.slice("networking.tcpProxies.".length);
-          svcCfg.networking = svcCfg.networking || {};
-          svcCfg.networking.tcpProxies = svcCfg.networking.tcpProxies || {};
-          (svcCfg.networking.tcpProxies as Record<string, unknown>)[port] = null;
-        } else if (path === "networking.privateNetworkEndpoint") {
-          svcCfg.networking = svcCfg.networking || {};
-          (svcCfg.networking as Record<string, unknown>).privateNetworkEndpoint = null;
-        } else if (path === "networking.serviceDomains") {
-          svcCfg.networking = svcCfg.networking || {};
-          (svcCfg.networking as Record<string, unknown>).serviceDomains = null;
-        } else if (path === "deploy.multiRegionConfig") {
-          svcCfg.deploy = svcCfg.deploy || {};
-          (svcCfg.deploy as Record<string, unknown>).multiRegionConfig = null;
-        } else if (path.startsWith("deploy.")) {
-          const field = path.slice("deploy.".length);
-          svcCfg.deploy = svcCfg.deploy || {};
-          (svcCfg.deploy as Record<string, unknown>)[field] = null;
-        } else if (path.startsWith("build.")) {
-          const field = path.slice("build.".length);
-          svcCfg.build = svcCfg.build || {};
-          (svcCfg.build as Record<string, unknown>)[field] = null;
-        } else if (path.startsWith("source.")) {
-          const field = path.slice("source.".length);
-          if (svcCfg.source) {
-            (svcCfg.source as Record<string, unknown>)[field] = null;
-          }
         }
       }
     } else if (entry.category === "volume" && entry.serviceName && serviceNameToId) {
@@ -254,6 +228,8 @@ export async function applyConfigDiff(
         }
       }
     }
+    // "setting" category: already nulled by config builder — no injection needed
+    // "service" category: handled by step 5 (deleteService)
   }
 
   // Step 3: Stage changes
@@ -278,6 +254,13 @@ export async function applyConfigDiff(
         }
       }
 
+      // Warn about orphaned volumes (no public volumeDelete mutation available)
+      for (const vol of createdVolumeIds) {
+        logger.warn(
+          `Orphaned volume for ${vol.serviceName} (ID: ${vol.id}) — delete manually in Railway dashboard`,
+        );
+      }
+
       return result; // Can't commit if stage failed
     }
   }
@@ -285,7 +268,13 @@ export async function applyConfigDiff(
   // Stage-only mode: stop here — don't commit, don't delete services, don't touch egress
   if (options?.stageOnly) {
     if (result.staged) {
-      logger.info("Changes staged. Review in Railway dashboard, then run --apply to commit.");
+      const hasEgressChanges = diff.entries.some((e) => e.path === "staticOutboundIps");
+      const egressNote = hasEgressChanges
+        ? " Note: static outbound IP changes require --apply."
+        : "";
+      logger.info(
+        `Changes staged. Review in Railway dashboard, then run --apply to commit.${egressNote}`,
+      );
     }
     return result;
   }

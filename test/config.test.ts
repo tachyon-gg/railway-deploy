@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildEnvironmentConfig, buildNewServiceConfig } from "../src/reconcile/config.js";
+import { buildEnvironmentConfig, buildServiceConfig } from "../src/reconcile/config.js";
 import type { State } from "../src/types/state.js";
 
 function makeState(overrides: Partial<State> = {}): State {
@@ -405,7 +405,7 @@ describe("buildEnvironmentConfig", () => {
   });
 });
 
-describe("buildNewServiceConfig", () => {
+describe("buildServiceConfig", () => {
   test("builds config for a new service", () => {
     const svc = {
       name: "web",
@@ -414,7 +414,7 @@ describe("buildNewServiceConfig", () => {
       domains: [{ domain: "app.example.com" }],
       startCommand: "nginx",
     };
-    const config = buildNewServiceConfig(svc);
+    const config = buildServiceConfig(svc);
     expect(config.source?.image).toBe("nginx");
     expect(config.variables?.PORT).toEqual({ value: "3000" });
     expect(config.networking?.customDomains?.["app.example.com"]).toEqual({});

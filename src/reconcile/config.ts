@@ -5,8 +5,12 @@
  * The resulting EnvironmentConfig can be staged via environmentStageChanges.
  *
  * IaC principle: every user-manageable field is explicitly set — either to the
- * user's value or to null (reset to Railway default). Fields not in config get
- * nulled so Railway clears any previously-set value.
+ * user's value or to null (reset to Railway default). This eliminates the need
+ * for post-hoc null-injection in the apply step for settings.
+ *
+ * Collections (variables, domains, shared vars, TCP proxies) use empty objects
+ * to represent "none" — removals of individual items are handled by the diff
+ * comparing desired vs current collections.
  *
  * Railway-internal fields (runtime, useLegacyStacker) are never sent.
  */
@@ -94,10 +98,13 @@ export function buildEnvironmentConfig(state: State, maps: ConfigBuildMaps): Env
 /**
  * Build a single service's EnvironmentConfig block from ServiceState.
  *
- * IaC: every user-manageable field is explicitly set or nulled.
+ * Every user-manageable setting is explicitly set or nulled. This means the
+ * patch sent to Railway contains the complete desired state for settings —
+ * no post-hoc null-injection needed in the apply step.
+ *
  * Railway-internal fields (runtime, useLegacyStacker) are omitted.
  */
-function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigService {
+export function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigService {
   const service: EnvConfigService = {};
 
   // --- Source ---
@@ -105,15 +112,12 @@ function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigServ
     const source: EnvConfigSource = {};
     if (svc.source?.image) source.image = svc.source.image;
     if (svc.source?.repo) source.repo = svc.source.repo;
-    if (svc.branch) source.branch = svc.branch;
-    if (svc.rootDirectory) source.rootDirectory = svc.rootDirectory;
-    if (svc.waitForCi !== undefined) source.checkSuites = svc.waitForCi;
-    if (svc.autoUpdates) {
-      source.autoUpdates = {
-        type: svc.autoUpdates.type,
-        schedule: svc.autoUpdates.schedule,
-      };
-    }
+    source.branch = svc.branch ?? null;
+    source.rootDirectory = svc.rootDirectory ?? null;
+    source.checkSuites = svc.waitForCi ?? null;
+    source.autoUpdates = svc.autoUpdates
+      ? { type: svc.autoUpdates.type, schedule: svc.autoUpdates.schedule }
+      : null;
     service.source = source;
   }
 
@@ -130,19 +134,13 @@ function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigServ
   for (const d of svc.domains) {
     networking.customDomains[d.domain] = d.targetPort !== undefined ? { port: d.targetPort } : {};
   }
-  if (svc.privateHostname) {
-    networking.privateNetworkEndpoint = svc.privateHostname;
-  }
-  if (svc.railwayDomain) {
-    // serviceDomains can be created via patches — Railway ignores the key
-    // and assigns its own *.up.railway.app domain. The port is applied.
-    networking.serviceDomains = {
-      _: { port: svc.railwayDomain.targetPort },
-    };
-  }
-  // tcpProxies in EnvironmentConfig are keyed by application port number as string
+  networking.privateNetworkEndpoint = svc.privateHostname ?? null;
+  networking.serviceDomains = svc.railwayDomain
+    ? { _: { port: svc.railwayDomain.targetPort } }
+    : null;
+  // TCP proxies — always include (empty = no proxies)
+  networking.tcpProxies = {};
   if (svc.tcpProxies && svc.tcpProxies.length > 0) {
-    networking.tcpProxies = {};
     for (const port of svc.tcpProxies) {
       networking.tcpProxies[String(port)] = {};
     }
@@ -150,54 +148,48 @@ function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigServ
   service.networking = networking;
 
   // --- Build ---
-  // Only include fields the user explicitly configured
-  const build: Record<string, unknown> = {};
-  if (svc.builder) build.builder = svc.builder;
-  if (svc.dockerfilePath) build.dockerfilePath = svc.dockerfilePath;
-  if (svc.buildCommand) build.buildCommand = svc.buildCommand;
-  if (svc.watchPatterns) build.watchPatterns = svc.watchPatterns;
-  if (svc.metal) build.buildEnvironment = "V3";
-  if (Object.keys(build).length > 0) {
-    service.build = build;
-  }
+  // Clearable fields: null when unset (Railway clears them)
+  // Default-backed fields: omit when unset (Railway keeps its default)
+  service.build = {
+    builder: svc.builder ?? undefined, // default-backed: RAILPACK
+    dockerfilePath: svc.dockerfilePath ?? null,
+    buildCommand: svc.buildCommand ?? null,
+    watchPatterns: svc.watchPatterns ?? null,
+    buildEnvironment: svc.metal ? "V3" : null,
+  };
 
   // --- Deploy ---
-  // Only include fields the user explicitly configured
-  const deploy: Record<string, unknown> = {};
-  if (svc.startCommand) deploy.startCommand = svc.startCommand;
-  if (svc.restartPolicy) deploy.restartPolicyType = svc.restartPolicy;
-  if (svc.restartPolicyMaxRetries !== undefined)
-    deploy.restartPolicyMaxRetries = svc.restartPolicyMaxRetries;
-  if (svc.cronSchedule) deploy.cronSchedule = svc.cronSchedule;
-  if (svc.healthcheck) {
-    deploy.healthcheckPath = svc.healthcheck.path;
-    deploy.healthcheckTimeout = svc.healthcheck.timeout;
-  }
-  if (svc.serverless !== undefined) deploy.sleepApplication = svc.serverless;
-  if (svc.drainingSeconds !== undefined) deploy.drainingSeconds = svc.drainingSeconds;
-  if (svc.overlapSeconds !== undefined) deploy.overlapSeconds = svc.overlapSeconds;
-  if (svc.ipv6EgressEnabled !== undefined) deploy.ipv6EgressEnabled = svc.ipv6EgressEnabled;
-  if (svc.registryCredentials) deploy.registryCredentials = svc.registryCredentials;
-  if (svc.preDeployCommand) deploy.preDeployCommand = svc.preDeployCommand;
-  if (svc.region) {
-    deploy.multiRegionConfig = {
-      [svc.region.region]: { numReplicas: svc.region.numReplicas },
-    };
-  }
-  if (svc.limits) {
-    deploy.limitOverride = {
-      containers: {
-        ...(svc.limits.memoryGB !== undefined
-          ? { memoryBytes: Math.round(svc.limits.memoryGB * 1_000_000_000) }
-          : {}),
-        ...(svc.limits.vCPUs !== undefined ? { cpu: svc.limits.vCPUs } : {}),
-      },
-    };
-  }
-  // runtime and useLegacyStacker are Railway-internal — never send
-  if (Object.keys(deploy).length > 0) {
-    service.deploy = deploy;
-  }
+  // Clearable fields: null when unset (Railway clears them)
+  // Default-backed fields: omit when unset (Railway keeps its default)
+  service.deploy = {
+    startCommand: svc.startCommand ?? null,
+    restartPolicyType: svc.restartPolicy ?? undefined, // default-backed: ON_FAILURE
+    restartPolicyMaxRetries: svc.restartPolicyMaxRetries ?? null,
+    cronSchedule: svc.cronSchedule ?? null,
+    healthcheckPath: svc.healthcheck?.path ?? null,
+    healthcheckTimeout: svc.healthcheck?.timeout ?? null,
+    sleepApplication: svc.serverless ?? null,
+    drainingSeconds: svc.drainingSeconds ?? null,
+    overlapSeconds: svc.overlapSeconds ?? null,
+    ipv6EgressEnabled: svc.ipv6EgressEnabled ?? undefined, // default-backed: false
+    preDeployCommand: svc.preDeployCommand ?? null,
+    // multiRegionConfig: default-backed (project-specific region) — omit when unset
+    ...(svc.region
+      ? { multiRegionConfig: { [svc.region.region]: { numReplicas: svc.region.numReplicas } } }
+      : {}),
+    limitOverride: svc.limits
+      ? {
+          containers: {
+            ...(svc.limits.memoryGB !== undefined
+              ? { memoryBytes: Math.round(svc.limits.memoryGB * 1_000_000_000) }
+              : {}),
+            ...(svc.limits.vCPUs !== undefined ? { cpu: svc.limits.vCPUs } : {}),
+          },
+        }
+      : null,
+    ...(svc.registryCredentials ? { registryCredentials: svc.registryCredentials } : {}),
+    // runtime and useLegacyStacker are Railway-internal — never send
+  };
 
   // --- Volume mounts ---
   if (svc.volume && volumeId) {
@@ -207,20 +199,10 @@ function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigServ
   }
 
   // --- Config file ---
-  // Send if user set it (including empty string to clear a previous value)
-  if (svc.railwayConfigFile !== undefined) {
-    service.configFile = svc.railwayConfigFile;
-  }
+  service.configFile = svc.railwayConfigFile ?? null;
 
   // Note: staticOutboundIps is handled via egress gateway mutations in apply.ts,
   // not through the EnvironmentConfig patch system.
 
   return service;
-}
-
-/**
- * Build a service config for a newly created service (after serviceCreate returns its ID).
- */
-export function buildNewServiceConfig(svc: ServiceState, volumeId?: string): EnvConfigService {
-  return buildServiceConfig(svc, volumeId);
 }

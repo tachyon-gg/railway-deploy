@@ -4,6 +4,7 @@
  * Produces a ConfigDiff containing field-level changes plus service/volume lifecycle operations.
  */
 
+import { logger } from "../logger.js";
 import type {
   ConfigDiff,
   ConfigDiffEntry,
@@ -354,14 +355,13 @@ function diffServiceSource(
     "checkSuites",
   ];
   for (const field of fields) {
-    const dv = desired?.[field];
-    const cv = current?.[field];
-    // Only diff fields present in desired
-    if (dv === undefined) continue;
+    const dv = normalizeEmpty(desired?.[field]);
+    const cv = normalizeEmpty(current?.[field]);
+    if (dv === undefined && cv === undefined) continue;
     if (!deepEqual(dv, cv)) {
       entries.push({
         path: `source.${field}`,
-        action: cv !== undefined ? "update" : "add",
+        action: dv === undefined ? "remove" : cv !== undefined ? "update" : "add",
         serviceName: name,
         category: "setting",
         oldValue: cv,
@@ -436,16 +436,14 @@ function diffServiceNetworking(
   ) {
     const dv = desired?.privateNetworkEndpoint;
     const cv = current?.privateNetworkEndpoint;
-    if (dv !== cv) {
-      entries.push({
-        path: "networking.privateNetworkEndpoint",
-        action: dv ? (cv ? "update" : "add") : "remove",
-        serviceName: name,
-        category: "setting",
-        oldValue: cv,
-        newValue: dv,
-      });
-    }
+    entries.push({
+      path: "networking.privateNetworkEndpoint",
+      action: dv ? (cv ? "update" : "add") : "remove",
+      serviceName: name,
+      category: "setting",
+      oldValue: cv,
+      newValue: dv,
+    });
   }
 
   // Service domains (railway domain) — removal detection
@@ -554,12 +552,11 @@ function diffServiceBuild(
   for (const field of fields) {
     const dv = normalizeEmpty(desired?.[field]);
     const cv = normalizeEmpty(current?.[field]);
-    // Only diff fields present in desired (user opted into managing them)
-    if (dv === undefined) continue;
+    if (dv === undefined && cv === undefined) continue;
     if (!deepEqual(dv, cv)) {
       entries.push({
         path: `build.${field}`,
-        action: cv !== undefined ? "update" : "add",
+        action: dv === undefined ? "remove" : cv !== undefined ? "update" : "add",
         serviceName: name,
         category: "setting",
         oldValue: cv,
@@ -595,12 +592,11 @@ function diffServiceDeploy(
     if (RAILWAY_INTERNAL_FIELDS.has(field)) continue;
     const dv = normalizeEmpty(desired?.[field]);
     const cv = normalizeEmpty(current?.[field]);
-    // Only diff fields present in desired (user opted into managing them)
-    if (dv === undefined) continue;
+    if (dv === undefined && cv === undefined) continue;
     if (!deepEqual(dv, cv)) {
       entries.push({
         path: `deploy.${field}`,
-        action: cv !== undefined ? "update" : "add",
+        action: dv === undefined ? "remove" : cv !== undefined ? "update" : "add",
         serviceName: name,
         category: "setting",
         oldValue: cv,
@@ -609,29 +605,28 @@ function diffServiceDeploy(
     }
   }
 
-  // Multi-region config — only diff if desired includes it
+  // Multi-region config — default-backed (Railway always assigns a region)
+  // Only diff when desired explicitly sets it; omission means "keep Railway default"
   const dMrc = normalizeEmpty(desired?.multiRegionConfig);
   const cMrc = normalizeEmpty(current?.multiRegionConfig);
   if (dMrc && !deepEqual(dMrc, cMrc)) {
-    if (dMrc || cMrc) {
-      entries.push({
-        path: "deploy.multiRegionConfig",
-        action: dMrc ? (cMrc ? "update" : "add") : "remove",
-        serviceName: name,
-        category: "setting",
-        oldValue: cMrc,
-        newValue: dMrc,
-      });
-    }
+    entries.push({
+      path: "deploy.multiRegionConfig",
+      action: dMrc ? (cMrc ? "update" : "add") : "remove",
+      serviceName: name,
+      category: "setting",
+      oldValue: cMrc,
+      newValue: dMrc,
+    });
   }
 
-  // Limit override — only diff if desired includes it
+  // Limit override — diff if either side has it
   const dLimits = normalizeEmpty(desired?.limitOverride);
   const cLimits = normalizeEmpty(current?.limitOverride);
-  if (dLimits && !deepEqual(dLimits, cLimits)) {
+  if (!deepEqual(dLimits, cLimits) && (dLimits || cLimits)) {
     entries.push({
       path: "deploy.limitOverride",
-      action: cLimits ? "update" : "add",
+      action: dLimits ? (cLimits ? "update" : "add") : "remove",
       serviceName: name,
       category: "setting",
       oldValue: cLimits,
@@ -760,7 +755,14 @@ function diffBuckets(
       });
     }
   }
-  // Note: bucket deletion not supported by Railway
+  // Warn about buckets in current but not in desired (deletion not supported by Railway)
+  for (const id of Object.keys(currentBuckets)) {
+    if (!(id in desiredBuckets)) {
+      logger.warn(
+        `Bucket ${id} exists in Railway but not in config — bucket deletion is not supported by Railway`,
+      );
+    }
+  }
 }
 
 /**

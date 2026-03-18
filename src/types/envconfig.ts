@@ -30,18 +30,18 @@ export interface AutoUpdateConfig {
 export interface EnvConfigSource {
   image?: string;
   repo?: string;
-  branch?: string;
-  rootDirectory?: string;
-  checkSuites?: boolean;
-  autoUpdates?: AutoUpdateConfig;
+  branch?: string | null;
+  rootDirectory?: string | null;
+  checkSuites?: boolean | null;
+  autoUpdates?: AutoUpdateConfig | null;
 }
 
 /** Service networking configuration */
 export interface EnvConfigNetworking {
   customDomains?: Record<string, { port?: number }>;
-  privateNetworkEndpoint?: string;
+  privateNetworkEndpoint?: string | null;
   /** Service domains (*.up.railway.app) — keyed by domain string */
-  serviceDomains?: Record<string, { port?: number }>;
+  serviceDomains?: Record<string, { port?: number }> | null;
   /** TCP proxies — keyed by application port number as string */
   tcpProxies?: Record<string, Record<string, never>>;
 }
@@ -77,11 +77,11 @@ export interface EnvConfigDeploy {
   sleepApplication?: boolean | null;
   drainingSeconds?: number | null;
   overlapSeconds?: number | null;
-  ipv6EgressEnabled?: boolean;
+  ipv6EgressEnabled?: boolean | null;
   registryCredentials?: { username: string; password: string } | null;
   runtime?: string;
   useLegacyStacker?: boolean;
-  multiRegionConfig?: MultiRegionConfig;
+  multiRegionConfig?: MultiRegionConfig | null;
   requiredMountPath?: string;
   preDeployCommand?: string | string[] | null;
   limitOverride?: EnvConfigLimitOverride | null;
@@ -101,7 +101,7 @@ export interface EnvConfigService {
   deploy?: EnvConfigDeploy;
   volumeMounts?: Record<string, EnvConfigVolumeMount>;
   /** Railway config file path */
-  configFile?: string;
+  configFile?: string | null;
   /** Service group ID */
   groupId?: string;
 }

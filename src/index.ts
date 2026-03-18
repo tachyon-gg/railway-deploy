@@ -236,9 +236,19 @@ async function run(configPath: string, opts: CliOptions) {
           (dl) => dl.path === e.path && dl.serviceName === e.serviceName && dl.action === e.action,
         ),
     );
+    // Also filter servicesToDelete whose name matches a data-loss entry
+    const dataLossServiceNames = new Set(
+      diff.dataLossEntries
+        .filter((dl) => dl.path === "service" && dl.category === "service" && dl.serviceName)
+        .map((dl) => dl.serviceName),
+    );
+    const filteredServicesToDelete = diff.servicesToDelete.filter(
+      (s) => !dataLossServiceNames.has(s.name),
+    );
     diff = {
       ...diff,
       entries: filtered,
+      servicesToDelete: filteredServicesToDelete,
       hasDataLoss: false,
       dataLossEntries: [],
     };
