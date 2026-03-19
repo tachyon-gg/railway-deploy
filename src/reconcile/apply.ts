@@ -337,12 +337,23 @@ export async function applyConfigDiff(
   // Stage-only mode: stop here — don't commit, don't delete services, don't touch egress
   if (options?.stageOnly) {
     if (result.staged) {
-      const hasEgressChanges = diff.entries.some((e) => e.path === "staticOutboundIps");
-      const egressNote = hasEgressChanges
-        ? " Note: static outbound IP changes require --apply."
-        : "";
+      const postCommitNotes: string[] = [];
+      if (diff.entries.some((e) => e.path === "staticOutboundIps")) {
+        postCommitNotes.push("static outbound IP changes");
+      }
+      if (
+        diff.entries.some(
+          (e) =>
+            e.path.startsWith("networking.tcpProxies.") &&
+            (e.action === "remove" || e.action === "update"),
+        )
+      ) {
+        postCommitNotes.push("TCP proxy removal/update");
+      }
+      const note =
+        postCommitNotes.length > 0 ? ` Note: ${postCommitNotes.join(", ")} require --apply.` : "";
       logger.info(
-        `Changes staged. Review in Railway dashboard, then run --apply to commit.${egressNote}`,
+        `Changes staged. Review in Railway dashboard, then run --apply to commit.${note}`,
       );
     }
     return result;
