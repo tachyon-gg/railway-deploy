@@ -12,7 +12,8 @@ beforeAll(() => {
     join(FIXTURE_DIR, "valid.yaml"),
     `
 project: Test
-environment: alpha
+environments:
+  - alpha
 services:
   web:
     source:
@@ -23,7 +24,8 @@ services:
   writeFileSync(
     join(FIXTURE_DIR, "invalid.yaml"),
     `
-environment: alpha
+environments:
+  - alpha
 services:
   web:
     source:
@@ -35,13 +37,16 @@ services:
     join(FIXTURE_DIR, "with-env-vars.yaml"),
     `
 project: Test
-environment: alpha
+environments:
+  - alpha
 services:
   web:
     source:
       image: nginx:latest
-    variables:
-      SECRET: "\${UNSET_CLI_VAR}"
+    environments:
+      alpha:
+        variables:
+          SECRET: "\${UNSET_CLI_VAR}"
 `,
   );
 });
@@ -82,11 +87,13 @@ async function run(
 }
 
 describe("CLI", () => {
-  test("--help shows usage", async () => {
+  test("--help shows usage including --stage", async () => {
     const { stdout, exitCode } = await run(["--help"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("railway-deploy");
     expect(stdout).toContain("--apply");
+    expect(stdout).toContain("--stage");
+    expect(stdout).toContain("--environment");
   });
 
   test("missing config file shows error", async () => {
@@ -118,10 +125,30 @@ describe("CLI", () => {
     expect(stdout).toContain("valid");
   });
 
-  test("nonexistent config file exits 1", async () => {
-    const { stderr, exitCode } = await run([join(FIXTURE_DIR, "does-not-exist.yaml")], {
+  test("missing -e flag without --validate shows error", async () => {
+    const { stderr, exitCode } = await run([join(FIXTURE_DIR, "valid.yaml")], {
       RAILWAY_TOKEN: "dummy",
     });
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--environment");
+  });
+
+  test("--apply and --stage are mutually exclusive", async () => {
+    const { stderr, exitCode } = await run(
+      [join(FIXTURE_DIR, "valid.yaml"), "-e", "alpha", "--apply", "--stage"],
+      { RAILWAY_TOKEN: "dummy" },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("mutually exclusive");
+  });
+
+  test("nonexistent config file exits 1", async () => {
+    const { stderr, exitCode } = await run(
+      [join(FIXTURE_DIR, "does-not-exist.yaml"), "-e", "alpha"],
+      {
+        RAILWAY_TOKEN: "dummy",
+      },
+    );
     expect(exitCode).toBe(1);
     expect(stderr).toContain("not found");
   });

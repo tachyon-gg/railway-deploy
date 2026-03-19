@@ -1,657 +1,416 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { changeLabel, printApplyResult, printChangeset } from "../src/reconcile/format.js";
-import type { Change, Changeset } from "../src/types/changeset.js";
+import { logger } from "../src/logger.js";
+import type { ApplyResult } from "../src/reconcile/format.js";
+import { printApplyResult, printConfigDiff } from "../src/reconcile/format.js";
+import type { ConfigDiff } from "../src/types/changeset.js";
 
-// Capture console.log output
-let logOutput: string[];
-let originalLog: typeof console.log;
-
-beforeEach(() => {
-  logOutput = [];
-  originalLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logOutput.push(args.map(String).join(" "));
+function emptyDiff(): ConfigDiff {
+  return {
+    entries: [],
+    servicesToCreate: [],
+    servicesToDelete: [],
+    volumesToCreate: [],
+    hasDataLoss: false,
+    dataLossEntries: [],
   };
-});
-
-afterEach(() => {
-  console.log = originalLog;
-});
-
-function allOutput(): string {
-  return logOutput.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// changeLabel
-// ---------------------------------------------------------------------------
-describe("changeLabel", () => {
-  test("includes service name and summary for every change type", () => {
-    const changes: Array<{ change: Change; mustContain: string[] }> = [
-      { change: { type: "create-service", name: "web" }, mustContain: ["web", "create", "empty"] },
-      {
-        change: {
-          type: "create-service",
-          name: "api",
-          source: { image: "node:20" },
-          branch: "main",
-        },
-        mustContain: ["api", "node:20", "branch: main"],
-      },
-      {
-        change: {
-          type: "create-service",
-          name: "db",
-          source: { image: "postgres:16" },
-          volume: { mount: "/data", name: "pg" },
-        },
-        mustContain: ["db", "postgres:16", "volume: /data"],
-      },
-      {
-        change: {
-          type: "create-service",
-          name: "cron",
-          source: { image: "alpine" },
-          cronSchedule: "*/5 * * * *",
-        },
-        mustContain: ["cron", "alpine", "cron:"],
-      },
-      {
-        change: { type: "delete-service", name: "old", serviceId: "svc-1" },
-        mustContain: ["old", "delete", "svc-1"],
-      },
-      {
-        change: { type: "upsert-variables", serviceName: "web", variables: { A: "1", B: "2" } },
-        mustContain: ["web", "2 var", "A", "B"],
-      },
-      {
-        change: { type: "delete-variables", serviceName: "web", variableNames: ["X"] },
-        mustContain: ["web", "1 var", "X"],
-      },
-      {
-        change: { type: "upsert-shared-variables", variables: { S: "1" } },
-        mustContain: ["1 var", "S"],
-      },
-      {
-        change: { type: "delete-shared-variables", variableNames: ["X", "Y"] },
-        mustContain: ["2 var", "X", "Y"],
-      },
-      {
-        change: { type: "create-domain", serviceName: "web", domain: "example.com" },
-        mustContain: ["web", "example.com"],
-      },
-      {
-        change: { type: "create-domain", serviceName: "web", domain: "api.com", targetPort: 8080 },
-        mustContain: ["api.com", "8080"],
-      },
-      {
-        change: { type: "delete-domain", serviceName: "web", domain: "old.com", domainId: "d1" },
-        mustContain: ["web", "old.com"],
-      },
-      {
-        change: {
-          type: "update-service-settings",
-          serviceName: "api",
-          serviceId: "s1",
-          settings: { startCommand: "npm start" },
-        },
-        mustContain: ["api", "startCommand"],
-      },
-      {
-        change: {
-          type: "create-volume",
-          serviceName: "db",
-          serviceId: "s1",
-          mount: "/data",
-          name: "vol",
-        },
-        mustContain: ["db", "/data"],
-      },
-      {
-        change: { type: "delete-volume", serviceName: "db", serviceId: "s1", volumeId: "v1" },
-        mustContain: ["db", "v1"],
-      },
-      {
-        change: {
-          type: "update-deployment-trigger",
-          serviceName: "web",
-          serviceId: "s1",
-          triggerId: "t1",
-          branch: "develop",
-        },
-        mustContain: ["web", "develop"],
-      },
-      {
-        change: {
-          type: "update-deployment-trigger",
-          serviceName: "web",
-          serviceId: "s1",
-          triggerId: "t1",
-          checkSuites: true,
-        },
-        mustContain: ["web", "checkSuites", "true"],
-      },
-      {
-        change: { type: "create-service-domain", serviceName: "web", targetPort: 3000 },
-        mustContain: ["web", "3000"],
-      },
-      {
-        change: { type: "create-service-domain", serviceName: "web" },
-        mustContain: ["web", "domain"],
-      },
-      {
-        change: { type: "delete-service-domain", serviceName: "web", domainId: "d1" },
-        mustContain: ["web", "domain"],
-      },
-      {
-        change: { type: "create-tcp-proxy", serviceName: "db", applicationPort: 5432 },
-        mustContain: ["db", "5432"],
-      },
-      {
-        change: { type: "delete-tcp-proxy", serviceName: "db", proxyId: "p1" },
-        mustContain: ["db", "p1"],
-      },
-      {
-        change: {
-          type: "update-service-limits",
-          serviceName: "web",
-          serviceId: "s1",
-          limits: { memoryGB: 8, vCPUs: 4 },
-        },
-        mustContain: ["web", "8GB", "vCPUs: 4"],
-      },
-      {
-        change: { type: "enable-static-ips", serviceName: "web", serviceId: "s1" },
-        mustContain: ["web", "enable"],
-      },
-      {
-        change: { type: "disable-static-ips", serviceName: "web", serviceId: "s1" },
-        mustContain: ["web", "disable"],
-      },
-      {
-        change: { type: "create-bucket", name: "k", bucketName: "my-bucket" },
-        mustContain: ["my-bucket"],
-      },
-      { change: { type: "delete-bucket", name: "old", bucketId: "b1" }, mustContain: ["old"] },
-      {
-        change: {
-          type: "enable-service-feature-flag",
-          serviceName: "web",
-          serviceId: "svc-1",
-          flag: "USE_VM_RUNTIME",
-        },
-        mustContain: ["web", "metal", "enable"],
-      },
-      {
-        change: {
-          type: "disable-service-feature-flag",
-          serviceName: "web",
-          serviceId: "svc-1",
-          flag: "USE_VM_RUNTIME",
-        },
-        mustContain: ["web", "metal", "disable"],
-      },
-    ];
+describe("printConfigDiff", () => {
+  let logged: string[];
 
-    for (const { change, mustContain } of changes) {
-      const label = changeLabel(change);
-      for (const text of mustContain) {
-        expect(label).toContain(text);
-      }
-    }
+  beforeEach(() => {
+    logged = [];
+    logger.info = (...args: unknown[]) => logged.push(args.join(" "));
+    logger.warn = (...args: unknown[]) => logged.push(`WARN: ${args.join(" ")}`);
+    logger.success = (...args: unknown[]) => logged.push(`OK: ${args.join(" ")}`);
+  });
+
+  afterEach(() => {
+    logger.level = 3;
+  });
+
+  test("prints no changes message when diff is empty", () => {
+    printConfigDiff(emptyDiff());
+    expect(logged.some((l) => l.includes("No changes needed"))).toBe(true);
+  });
+
+  test("prints shared variable changes", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "sharedVariables.APP_ENV",
+          action: "add",
+          serviceName: null,
+          category: "shared-variable",
+          newValue: "alpha",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("Shared variable") && l.includes("APP_ENV"))).toBe(true);
+  });
+
+  test("groups entries by service", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "variables.PORT",
+          action: "add",
+          serviceName: "web",
+          category: "variable",
+          newValue: "3000",
+        },
+        {
+          path: "variables.HOST",
+          action: "add",
+          serviceName: "web",
+          category: "variable",
+          newValue: "0.0.0.0",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("web:"))).toBe(true);
+  });
+
+  test("shows verbose values when verbose option is set", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "variables.PORT",
+          action: "update",
+          serviceName: "web",
+          category: "variable",
+          oldValue: "2000",
+          newValue: "3000",
+        },
+      ],
+    };
+    printConfigDiff(diff, { verbose: true });
+    expect(logged.some((l) => l.includes("2000") && l.includes("3000"))).toBe(true);
+  });
+
+  test("masks sensitive variable values", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "sharedVariables.JWT_SECRET",
+          action: "update",
+          serviceName: null,
+          category: "shared-variable",
+          oldValue: "old-secret",
+          newValue: "new-secret",
+        },
+      ],
+    };
+    printConfigDiff(diff, { verbose: true });
+    expect(logged.some((l) => l.includes("***"))).toBe(true);
+    expect(logged.every((l) => !l.includes("old-secret"))).toBe(true);
+  });
+
+  test("prints summary line", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        { path: "v.A", action: "add", serviceName: "web", category: "variable", newValue: "1" },
+        {
+          path: "v.B",
+          action: "update",
+          serviceName: "web",
+          category: "variable",
+          oldValue: "1",
+          newValue: "2",
+        },
+        { path: "v.C", action: "remove", serviceName: "web", category: "variable", oldValue: "3" },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("to create") && l.includes("to delete"))).toBe(true);
+  });
+
+  test("prints domain entries", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "networking.customDomains.app.example.com",
+          action: "add",
+          serviceName: "web",
+          category: "domain",
+          newValue: { port: 8080 },
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("domain") && l.includes("app.example.com"))).toBe(true);
+  });
+
+  test("prints setting entries with verbose old/new values", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "deploy.startCommand",
+          action: "update",
+          serviceName: "web",
+          category: "setting",
+          oldValue: "node app.js",
+          newValue: "npm start",
+        },
+      ],
+    };
+    printConfigDiff(diff, { verbose: true });
+    expect(logged.some((l) => l.includes("node app.js") && l.includes("npm start"))).toBe(true);
+  });
+
+  test("prints setting entry with verbose sensitive field masked", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "deploy.registryCredentials",
+          action: "update",
+          serviceName: "web",
+          category: "setting",
+          oldValue: { password: "old" },
+          newValue: { password: "new" },
+        },
+      ],
+    };
+    printConfigDiff(diff, { verbose: true });
+    // registryCredentials contains "CREDENTIAL" so should be masked
+    expect(logged.some((l) => l.includes("***"))).toBe(true);
+  });
+
+  test("prints setting entry non-verbose with remove action", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "deploy.cronSchedule",
+          action: "remove",
+          serviceName: "web",
+          category: "setting",
+          oldValue: "0 * * * *",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("(unset)"))).toBe(true);
+  });
+
+  test("prints setting entry non-verbose with add action", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "deploy.startCommand",
+          action: "add",
+          serviceName: "web",
+          category: "setting",
+          newValue: "npm start",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("startCommand") && l.includes("npm start"))).toBe(true);
+  });
+
+  test("prints setting entry verbose with null newValue shows (unset)", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "deploy.cronSchedule",
+          action: "update",
+          serviceName: "web",
+          category: "setting",
+          oldValue: "0 * * * *",
+          newValue: null,
+        },
+      ],
+    };
+    printConfigDiff(diff, { verbose: true });
+    expect(logged.some((l) => l.includes("(unset)"))).toBe(true);
+  });
+
+  test("prints volume add entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "volumeMounts.vol-1",
+          action: "add",
+          serviceName: "db",
+          category: "volume",
+          newValue: "/data",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("volume") && l.includes("/data"))).toBe(true);
+  });
+
+  test("prints volume remove entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "volumeMounts.vol-1",
+          action: "remove",
+          serviceName: "db",
+          category: "volume",
+          oldValue: "/data",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("volume") && l.includes("remove"))).toBe(true);
+  });
+
+  test("prints volume update entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "volumeMounts.vol-1",
+          action: "update",
+          serviceName: "db",
+          category: "volume",
+          oldValue: "/old",
+          newValue: "/new",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("/old") && l.includes("/new"))).toBe(true);
+  });
+
+  test("prints bucket entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "buckets.media",
+          action: "add",
+          serviceName: null,
+          category: "bucket",
+          newValue: "iad",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("bucket") && l.includes("add"))).toBe(true);
+  });
+
+  test("prints service create entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "service",
+          action: "add",
+          serviceName: "web",
+          category: "service",
+          newValue: "nginx:latest",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("web"))).toBe(true);
+  });
+
+  test("prints service delete entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "service",
+          action: "remove",
+          serviceName: "old-svc",
+          category: "service",
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(logged.some((l) => l.includes("old-svc"))).toBe(true);
+  });
+
+  test("prints domain remove entry", () => {
+    const diff: ConfigDiff = {
+      ...emptyDiff(),
+      entries: [
+        {
+          path: "networking.customDomains.old.example.com",
+          action: "remove",
+          serviceName: "web",
+          category: "domain",
+          oldValue: {},
+        },
+      ],
+    };
+    printConfigDiff(diff);
+    expect(
+      logged.some(
+        (l) => l.includes("domain") && l.includes("remove") && l.includes("old.example.com"),
+      ),
+    ).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-// printChangeset
-// ---------------------------------------------------------------------------
-describe("printChangeset", () => {
-  test("empty changeset prints no changes needed", () => {
-    const changeset: Changeset = { changes: [] };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("No changes needed");
-  });
-
-  test("non-empty changeset prints change count", () => {
-    const changeset: Changeset = {
-      changes: [
-        { type: "create-service", name: "web", source: { image: "node:18" } },
-        {
-          type: "upsert-variables",
-          serviceName: "web",
-          variables: { PORT: "3000" },
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("2 changes");
-  });
-
-  test("sensitive variable values are masked in verbose mode", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "upsert-variables",
-          serviceName: "api",
-          variables: {
-            DB_PASSWORD: "super-secret-123",
-            APP_SECRET: "my-secret-value",
-            NORMAL_VAR: "visible-value",
-          },
-        },
-      ],
-    };
-    printChangeset(changeset, {
-      noColor: true,
-      verbose: true,
-      currentState: {
-        services: {
-          api: { variables: { DB_PASSWORD: "old-pass", NORMAL_VAR: "old-val" } },
-        },
-        sharedVariables: {},
-      },
-    });
-    const output = allOutput();
-    // Sensitive values should be masked
-    expect(output).toContain("***");
-    expect(output).not.toContain("super-secret-123");
-    expect(output).not.toContain("my-secret-value");
-    expect(output).not.toContain("old-pass");
-    // Normal values should be visible
-    expect(output).toContain("visible-value");
-  });
-
-  test("sensitive shared variable values are masked in verbose mode", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "upsert-shared-variables",
-          variables: {
-            API_TOKEN: "tok-abc123",
-            PUBLIC_URL: "https://example.com",
-          },
-        },
-      ],
-    };
-    printChangeset(changeset, {
-      noColor: true,
-      verbose: true,
-      currentState: {
-        services: {},
-        sharedVariables: { API_TOKEN: "old-token" },
-      },
-    });
-    const output = allOutput();
-    expect(output).not.toContain("tok-abc123");
-    expect(output).not.toContain("old-token");
-    expect(output).toContain("https://example.com");
-  });
-
-  test("non-verbose mode does not show variable values", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "upsert-variables",
-          serviceName: "web",
-          variables: { PORT: "3000", HOST: "0.0.0.0" },
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    // Should show variable names but not values
-    expect(output).toContain("PORT");
-    expect(output).toContain("HOST");
-    expect(output).not.toContain("3000");
-    expect(output).not.toContain("0.0.0.0");
-  });
-
-  test("prints create and delete services", () => {
-    const changeset: Changeset = {
-      changes: [
-        { type: "create-service", name: "frontend", source: { repo: "github.com/org/app" } },
-        { type: "delete-service", name: "legacy", serviceId: "svc-old" },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("frontend");
-    expect(output).toContain("github.com/org/app");
-    expect(output).toContain("legacy");
-  });
-
-  test("prints domain changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        { type: "create-domain", serviceName: "web", domain: "app.example.com" },
-        { type: "delete-domain", serviceName: "web", domain: "old.example.com", domainId: "d-1" },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("app.example.com");
-    expect(output).toContain("old.example.com");
-  });
-
-  test("prints volume changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "create-volume",
-          serviceName: "db",
-          serviceId: "s1",
-          mount: "/var/data",
-          name: "pgdata",
-        },
-        { type: "delete-volume", serviceName: "cache", serviceId: "s2", volumeId: "v1" },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("/var/data");
-    expect(output).toContain("cache");
-  });
-
-  test("verbose settings masks sensitive keys like registryCredentials", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-service-settings",
-          serviceName: "api",
-          serviceId: "svc-1",
-          settings: { registryCredentials: { username: "user", password: "secret" } },
-        },
-      ],
-    };
-    printChangeset(changeset, {
-      noColor: true,
-      verbose: true,
-      currentState: { services: {}, sharedVariables: {} },
-    });
-    const output = allOutput();
-    expect(output).toContain("registryCredentials: ***");
-    expect(output).not.toContain("secret");
-  });
-
-  test("prints bucket changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        { type: "create-bucket", name: "uploads", bucketName: "my-uploads" },
-        { type: "delete-bucket", name: "old-assets", bucketId: "bkt-old" },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("my-uploads");
-    expect(output).toContain("old-assets");
-  });
-
-  test("prints settings changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-service-settings",
-          serviceName: "api",
-          serviceId: "svc-1",
-          settings: { startCommand: "node server.js" },
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("api");
-    expect(output).toContain("startCommand");
-  });
-
-  test("create-service with no source shows 'empty'", () => {
-    const changeset: Changeset = {
-      changes: [{ type: "create-service", name: "worker" }],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("worker");
-    expect(output).toContain("empty");
-  });
-
-  test("verbose settings shows old and new values", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-service-settings",
-          serviceName: "api",
-          serviceId: "svc-1",
-          settings: { startCommand: "npm start" },
-        },
-      ],
-    };
-    printChangeset(changeset, {
-      noColor: true,
-      verbose: true,
-      currentState: {
-        services: {
-          api: { variables: {}, startCommand: "node index.js" },
-        },
-        sharedVariables: {},
-      },
-    });
-    const output = allOutput();
-    expect(output).toContain('"node index.js"');
-    expect(output).toContain('"npm start"');
-    expect(output).toContain("startCommand");
-  });
-
-  test("verbose settings shows (unset) for null values", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-service-settings",
-          serviceName: "api",
-          serviceId: "svc-1",
-          settings: { healthcheck: null },
-        },
-      ],
-    };
-    printChangeset(changeset, {
-      noColor: true,
-      verbose: true,
-      currentState: {
-        services: {
-          api: { variables: {}, healthcheck: { path: "/health" } },
-        },
-        sharedVariables: {},
-      },
-    });
-    const output = allOutput();
-    expect(output).toContain("(unset)");
-    expect(output).toContain("healthcheck");
-  });
-
-  test("non-verbose shared variable upsert shows just keys", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "upsert-shared-variables",
-          variables: { SHARED_KEY: "some-value" },
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true, verbose: false });
-    const output = allOutput();
-    expect(output).toContain("SHARED_KEY");
-    expect(output).not.toContain("some-value");
-  });
-
-  test("delete-shared-variables prints variable names", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "delete-shared-variables",
-          variableNames: ["OLD_SHARED", "DEPRECATED"],
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("OLD_SHARED");
-    expect(output).toContain("DEPRECATED");
-  });
-
-  test("prints deployment trigger changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-deployment-trigger",
-          serviceName: "api",
-          serviceId: "svc-1",
-          triggerId: "trig-1",
-          branch: "develop",
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("api");
-    expect(output).toContain("develop");
-  });
-
-  test("prints railway domain changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "create-service-domain",
-          serviceName: "web",
-          serviceId: "svc-1",
-          targetPort: 8080,
-        },
-        {
-          type: "delete-service-domain",
-          serviceName: "old",
-          serviceId: "svc-2",
-          domainId: "dom-1",
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("web");
-    expect(output).toContain("port 8080");
-    expect(output).toContain("old");
-  });
-
-  test("prints TCP proxy changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "create-tcp-proxy",
-          serviceName: "db",
-          serviceId: "svc-1",
-          applicationPort: 5432,
-        },
-        {
-          type: "delete-tcp-proxy",
-          serviceName: "cache",
-          serviceId: "svc-2",
-          proxyId: "proxy-1",
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("db");
-    expect(output).toContain("port 5432");
-    expect(output).toContain("cache");
-  });
-
-  test("prints resource limits changes", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "update-service-limits",
-          serviceName: "api",
-          serviceId: "svc-1",
-          limits: { memoryGB: 8, vCPUs: 4 },
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("api");
-    expect(output).toContain("memory: 8GB");
-    expect(output).toContain("vCPUs: 4");
-  });
-
-  test("delete-variables prints service name and variable names", () => {
-    const changeset: Changeset = {
-      changes: [
-        {
-          type: "delete-variables",
-          serviceName: "api",
-          variableNames: ["STALE_VAR", "UNUSED"],
-        },
-      ],
-    };
-    printChangeset(changeset, { noColor: true });
-    const output = allOutput();
-    expect(output).toContain("api");
-    expect(output).toContain("delete");
-    expect(output).toContain("STALE_VAR");
-    expect(output).toContain("UNUSED");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// printApplyResult
-// ---------------------------------------------------------------------------
 describe("printApplyResult", () => {
-  test("all succeeded shows success count", () => {
-    const result = {
-      applied: [
-        { type: "create-service" as const, name: "web" },
-        { type: "create-service" as const, name: "api" },
-      ],
-      failed: [],
+  let logged: string[];
+
+  beforeEach(() => {
+    logged = [];
+    logger.info = (...args: unknown[]) => logged.push(args.join(" "));
+    logger.error = (...args: unknown[]) => logged.push(`ERROR: ${args.join(" ")}`);
+    logger.success = (...args: unknown[]) => logged.push(`OK: ${args.join(" ")}`);
+  });
+
+  test("prints success result", () => {
+    const result: ApplyResult = {
+      staged: true,
+      committed: true,
+      servicesCreated: [],
+      servicesDeleted: [],
+      volumesCreated: [],
+      errors: [],
     };
-    printApplyResult(result, true);
-    const output = allOutput();
-    expect(output).toContain("2 succeeded");
-    expect(output).not.toContain("failed:");
+    printApplyResult(result);
+    expect(logged.some((l) => l.includes("staged"))).toBe(true);
+    expect(logged.some((l) => l.includes("committed"))).toBe(true);
   });
 
-  test("some failures shows failure details", () => {
-    const applied: Change[] = [{ type: "create-service", name: "web" }];
-    const failed = [
-      {
-        change: {
-          type: "upsert-variables" as const,
-          serviceName: "api",
-          variables: { PORT: "3000" },
-        },
-        error: "API rate limit exceeded",
-      },
-      {
-        change: {
-          type: "create-domain" as const,
-          serviceName: "web",
-          domain: "example.com",
-        },
-        error: "Domain already taken",
-      },
-    ];
-    printApplyResult({ applied, failed }, true);
-    const output = allOutput();
-    expect(output).toContain("1 succeeded");
-    expect(output).toContain("2 failed:");
-    expect(output).toContain("API rate limit exceeded");
-    expect(output).toContain("Domain already taken");
-    expect(output).toContain("api:");
-    expect(output).toContain("web:");
+  test("prints errors", () => {
+    const result: ApplyResult = {
+      staged: false,
+      committed: false,
+      servicesCreated: [],
+      servicesDeleted: [],
+      volumesCreated: [],
+      errors: [{ step: "stage", error: "permission denied" }],
+    };
+    printApplyResult(result);
+    expect(logged.some((l) => l.includes("error"))).toBe(true);
+    expect(logged.some((l) => l.includes("permission denied"))).toBe(true);
   });
 
-  test("zero succeeded and zero failed", () => {
-    printApplyResult({ applied: [], failed: [] }, true);
-    const output = allOutput();
-    expect(output).toContain("0 succeeded");
+  test("prints created and deleted services", () => {
+    const result: ApplyResult = {
+      staged: true,
+      committed: true,
+      servicesCreated: ["new-svc"],
+      servicesDeleted: ["old-svc"],
+      volumesCreated: [],
+      errors: [],
+    };
+    printApplyResult(result);
+    expect(logged.some((l) => l.includes("Created 1 service"))).toBe(true);
+    expect(logged.some((l) => l.includes("Deleted 1 service"))).toBe(true);
   });
 });

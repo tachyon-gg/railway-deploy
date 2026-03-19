@@ -1,4 +1,5 @@
-import type { ParamDef } from "../types/config.js";
+import { logger } from "../logger.js";
+import type { ParamDef } from "./schema.js";
 
 /**
  * Validate parameter values against definitions and apply defaults.
@@ -23,7 +24,7 @@ export function resolveParams(
   // Warn about extra params not in the template
   for (const name of Object.keys(values)) {
     if (!(name in defs)) {
-      console.warn(`Warning: unknown parameter "${name}" (not in template)`);
+      logger.warn(`Unknown parameter "${name}" (not in template)`);
     }
   }
 
@@ -44,6 +45,7 @@ export function expandParams(input: string, params: Record<string, string>): str
 
 /**
  * Recursively expand %{param} placeholders in an object/array/string.
+ * Only expands in string values — non-string values pass through unchanged.
  */
 export function expandParamsDeep<T>(value: T, params: Record<string, string>): T {
   if (typeof value === "string") {

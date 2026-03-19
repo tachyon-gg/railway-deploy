@@ -14,6 +14,7 @@ const config: CodegenConfig = {
           SubscriptionPlanLimit: "string",
           RailpackInfo: "Record<string, unknown>",
           ServiceInstanceLimit: "{ memoryGB?: number; vCPUs?: number }",
+          EnvironmentConfig: "Record<string, unknown>",
         },
         enumsAsTypes: true,
         skipTypename: true,

@@ -1,9 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import {
   getDeletedVariables,
-  loadEnvFile,
   resolveEnvVarString,
   resolveEnvVars,
 } from "../src/config/variables.js";
@@ -105,53 +102,5 @@ describe("getDeletedVariables", () => {
   test("returns empty array when no nulls", () => {
     const result = getDeletedVariables({ A: "1", B: "2" });
     expect(result).toEqual([]);
-  });
-});
-
-describe("loadEnvFile", () => {
-  const TMP_DIR = join(import.meta.dir, "__env_fixtures__");
-
-  beforeAll(() => {
-    mkdirSync(TMP_DIR, { recursive: true });
-  });
-
-  afterAll(() => {
-    rmSync(TMP_DIR, { recursive: true, force: true });
-  });
-
-  test("parses basic .env file", () => {
-    const envPath = join(TMP_DIR, "basic.env");
-    writeFileSync(
-      envPath,
-      `
-# A comment
-FOO=bar
-BAZ=qux
-`,
-    );
-    const result = loadEnvFile(envPath);
-    expect(result.FOO).toBe("bar");
-    expect(result.BAZ).toBe("qux");
-  });
-
-  test("handles quoted values", () => {
-    const envPath = join(TMP_DIR, "quoted.env");
-    writeFileSync(
-      envPath,
-      `
-DOUBLE="hello world"
-SINGLE='single quoted'
-`,
-    );
-    const result = loadEnvFile(envPath);
-    expect(result.DOUBLE).toBe("hello world");
-    expect(result.SINGLE).toBe("single quoted");
-  });
-
-  test("handles empty values", () => {
-    const envPath = join(TMP_DIR, "empty.env");
-    writeFileSync(envPath, `EMPTY=\n`);
-    const result = loadEnvFile(envPath);
-    expect(result.EMPTY).toBe("");
   });
 });

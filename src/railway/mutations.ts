@@ -1,32 +1,29 @@
 import type { GraphQLClient } from "graphql-request";
-import type {
-  ActiveServiceFeatureFlag,
-  DeploymentTriggerUpdateInput,
-  ServiceCreateInput,
-  ServiceInstanceUpdateInput,
-} from "../generated/graphql.js";
+import type { ServiceCreateInput } from "../generated/graphql.js";
 import {
   BucketCreateDocument,
   CustomDomainCreateDocument,
   CustomDomainDeleteDocument,
-  DeploymentTriggerUpdateDocument,
+  CustomDomainUpdateDocument,
   EgressGatewayAssociationCreateDocument,
   EgressGatewayAssociationsClearDocument,
+  EnvironmentCreateDocument,
+  EnvironmentDeleteDocument,
+  EnvironmentPatchCommitStagedDocument,
+  EnvironmentStageChangesDocument,
+  PrivateNetworkEndpointDeleteDocument,
+  PrivateNetworkEndpointRenameDocument,
   ServiceCreateDocument,
   ServiceDeleteDocument,
   ServiceDomainCreateDocument,
   ServiceDomainDeleteDocument,
-  ServiceFeatureFlagAddDocument,
-  ServiceFeatureFlagRemoveDocument,
-  ServiceInstanceLimitsUpdateDocument,
-  ServiceInstanceUpdateDocument,
-  TcpProxyCreateDocument,
+  ServiceDomainUpdateDocument,
   TcpProxyDeleteDocument,
-  VariableCollectionUpsertDocument,
-  VariableDeleteDocument,
   VolumeCreateDocument,
   VolumeDeleteDocument,
+  VolumeUpdateDocument,
 } from "../generated/graphql.js";
+import type { EnvironmentConfig } from "../types/envconfig.js";
 
 export async function createService(
   client: GraphQLClient,
@@ -61,66 +58,52 @@ export async function deleteService(client: GraphQLClient, serviceId: string) {
   await client.request(ServiceDeleteDocument, { id: serviceId });
 }
 
-export async function upsertVariables(
+export async function createVolume(
   client: GraphQLClient,
   projectId: string,
-  environmentId: string,
   serviceId: string,
-  variables: Record<string, string>,
-  skipDeploys?: boolean,
+  environmentId: string,
+  mountPath: string,
 ) {
-  await client.request(VariableCollectionUpsertDocument, {
-    input: {
-      projectId,
-      environmentId,
-      serviceId,
-      variables,
-      ...(skipDeploys !== undefined && {
-        skipDeploys: skipDeploys,
-      }),
-    },
+  const data = await client.request(VolumeCreateDocument, {
+    input: { projectId, serviceId, environmentId, mountPath },
   });
+  return data.volumeCreate;
 }
 
-export async function upsertSharedVariables(
-  client: GraphQLClient,
-  projectId: string,
-  environmentId: string,
-  variables: Record<string, string>,
-  skipDeploys?: boolean,
-) {
-  await client.request(VariableCollectionUpsertDocument, {
-    input: {
-      projectId,
-      environmentId,
-      variables,
-      ...(skipDeploys !== undefined && {
-        skipDeploys: skipDeploys,
-      }),
-    },
-  });
+export async function updateVolume(client: GraphQLClient, volumeId: string, name: string) {
+  await client.request(VolumeUpdateDocument, { volumeId, input: { name } });
 }
 
-export async function deleteVariable(
+export async function createBucket(client: GraphQLClient, projectId: string, name: string) {
+  const data = await client.request(BucketCreateDocument, {
+    input: { projectId, name },
+  });
+  return data.bucketCreate;
+}
+
+export async function deleteVolume(client: GraphQLClient, volumeId: string) {
+  await client.request(VolumeDeleteDocument, { volumeId });
+}
+
+export async function createEgressGateway(
   client: GraphQLClient,
-  projectId: string,
-  environmentId: string,
   serviceId: string,
-  name: string,
+  environmentId: string,
 ) {
-  await client.request(VariableDeleteDocument, {
-    input: { projectId, environmentId, serviceId, name },
+  const data = await client.request(EgressGatewayAssociationCreateDocument, {
+    input: { serviceId, environmentId },
   });
+  return data.egressGatewayAssociationCreate;
 }
 
-export async function deleteSharedVariable(
+export async function clearEgressGateways(
   client: GraphQLClient,
-  projectId: string,
+  serviceId: string,
   environmentId: string,
-  name: string,
 ) {
-  await client.request(VariableDeleteDocument, {
-    input: { projectId, environmentId, name },
+  await client.request(EgressGatewayAssociationsClearDocument, {
+    input: { serviceId, environmentId },
   });
 }
 
@@ -148,45 +131,17 @@ export async function deleteCustomDomain(client: GraphQLClient, domainId: string
   await client.request(CustomDomainDeleteDocument, { id: domainId });
 }
 
-export async function updateServiceInstance(
+export async function updateCustomDomain(
   client: GraphQLClient,
-  serviceId: string,
+  domainId: string,
   environmentId: string,
-  input: ServiceInstanceUpdateInput,
+  targetPort?: number,
 ) {
-  await client.request(ServiceInstanceUpdateDocument, {
-    serviceId,
+  await client.request(CustomDomainUpdateDocument, {
+    id: domainId,
     environmentId,
-    input,
+    ...(targetPort !== undefined ? { targetPort } : {}),
   });
-}
-
-export async function createVolume(
-  client: GraphQLClient,
-  projectId: string,
-  serviceId: string,
-  environmentId: string,
-  mountPath: string,
-) {
-  await client.request(VolumeCreateDocument, {
-    input: { projectId, serviceId, environmentId, mountPath },
-  });
-}
-
-export async function deleteVolume(client: GraphQLClient, volumeId: string) {
-  await client.request(VolumeDeleteDocument, { volumeId });
-}
-
-export async function updateDeploymentTrigger(
-  client: GraphQLClient,
-  triggerId: string,
-  input: DeploymentTriggerUpdateInput,
-) {
-  const data = await client.request(DeploymentTriggerUpdateDocument, {
-    id: triggerId,
-    input,
-  });
-  return data.deploymentTriggerUpdate;
 }
 
 export async function createServiceDomain(
@@ -209,82 +164,81 @@ export async function deleteServiceDomain(client: GraphQLClient, domainId: strin
   await client.request(ServiceDomainDeleteDocument, { id: domainId });
 }
 
-export async function createTcpProxy(
+export async function updateServiceDomain(
   client: GraphQLClient,
-  serviceId: string,
-  environmentId: string,
-  applicationPort: number,
+  input: {
+    serviceDomainId: string;
+    serviceId: string;
+    environmentId: string;
+    domain: string;
+    targetPort?: number;
+  },
 ) {
-  const data = await client.request(TcpProxyCreateDocument, {
-    input: { serviceId, environmentId, applicationPort },
+  await client.request(ServiceDomainUpdateDocument, { input });
+}
+
+export async function renamePrivateNetworkEndpoint(
+  client: GraphQLClient,
+  endpointId: string,
+  dnsName: string,
+  privateNetworkId: string,
+) {
+  await client.request(PrivateNetworkEndpointRenameDocument, {
+    id: endpointId,
+    dnsName,
+    privateNetworkId,
   });
-  return data.tcpProxyCreate;
+}
+
+export async function deletePrivateNetworkEndpoint(client: GraphQLClient, endpointId: string) {
+  await client.request(PrivateNetworkEndpointDeleteDocument, { id: endpointId });
+}
+
+export async function deleteEnvironment(client: GraphQLClient, environmentId: string) {
+  await client.request(EnvironmentDeleteDocument, { id: environmentId });
+}
+
+export async function createEnvironment(client: GraphQLClient, projectId: string, name: string) {
+  const data = await client.request(EnvironmentCreateDocument, {
+    input: { projectId, name },
+  });
+  return data.environmentCreate;
 }
 
 export async function deleteTcpProxy(client: GraphQLClient, proxyId: string) {
   await client.request(TcpProxyDeleteDocument, { id: proxyId });
 }
 
-export async function updateServiceInstanceLimits(
+/**
+ * Stage environment changes. Uses merge mode to add/update without full replacement.
+ */
+export async function stageEnvironmentChanges(
   client: GraphQLClient,
-  serviceId: string,
   environmentId: string,
-  limits: { memoryGB?: number | null; vCPUs?: number | null },
+  config: EnvironmentConfig,
+  merge?: boolean,
 ) {
-  await client.request(ServiceInstanceLimitsUpdateDocument, {
-    input: {
-      serviceId,
-      environmentId,
-      ...(limits.memoryGB !== undefined ? { memoryGB: limits.memoryGB } : {}),
-      ...(limits.vCPUs !== undefined ? { vCPUs: limits.vCPUs } : {}),
-    },
+  const data = await client.request(EnvironmentStageChangesDocument, {
+    environmentId,
+    input: config as Record<string, unknown>,
+    merge: merge ?? true,
   });
+  return data.environmentStageChanges;
 }
 
-export async function createEgressGateway(
+/**
+ * Commit staged changes. This atomically applies the staged patch and triggers deploys.
+ */
+export async function commitStagedChanges(
   client: GraphQLClient,
-  serviceId: string,
   environmentId: string,
+  commitMessage?: string,
+  skipDeploys?: boolean,
 ) {
-  const data = await client.request(EgressGatewayAssociationCreateDocument, {
-    input: { serviceId, environmentId },
+  const data = await client.request(EnvironmentPatchCommitStagedDocument, {
+    environmentId,
+    ...(commitMessage ? { commitMessage } : {}),
+    ...(skipDeploys !== undefined ? { skipDeploys } : {}),
   });
-  return data.egressGatewayAssociationCreate;
-}
-
-export async function clearEgressGateways(
-  client: GraphQLClient,
-  serviceId: string,
-  environmentId: string,
-) {
-  await client.request(EgressGatewayAssociationsClearDocument, {
-    input: { serviceId, environmentId },
-  });
-}
-
-export async function addServiceFeatureFlag(
-  client: GraphQLClient,
-  serviceId: string,
-  flag: ActiveServiceFeatureFlag,
-) {
-  await client.request(ServiceFeatureFlagAddDocument, {
-    input: { serviceId, flag },
-  });
-}
-
-export async function removeServiceFeatureFlag(
-  client: GraphQLClient,
-  serviceId: string,
-  flag: ActiveServiceFeatureFlag,
-) {
-  await client.request(ServiceFeatureFlagRemoveDocument, {
-    input: { serviceId, flag },
-  });
-}
-
-export async function createBucket(client: GraphQLClient, projectId: string, name: string) {
-  const data = await client.request(BucketCreateDocument, {
-    input: { projectId, name },
-  });
-  return data.bucketCreate;
+  return data.environmentPatchCommitStaged;
 }

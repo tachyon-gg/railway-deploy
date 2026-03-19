@@ -3,9 +3,6 @@
  * ${{service.VAR}} (Railway references) are passed through as-is.
  */
 
-import { parse as parseDotenv } from "dotenv";
-import { readFileSync } from "fs";
-
 /**
  * Resolve ${ENV_VAR} placeholders from the local shell environment.
  * Leaves ${{...}} (Railway references) untouched.
@@ -54,12 +51,4 @@ export function getDeletedVariables(variables: Record<string, string | null>): s
   return Object.entries(variables)
     .filter(([, v]) => v === null)
     .map(([k]) => k);
-}
-
-/**
- * Parse a .env file into a key-value record using dotenv.
- */
-export function loadEnvFile(path: string): Record<string, string> {
-  const content = readFileSync(path, "utf-8");
-  return parseDotenv(Buffer.from(content)) as Record<string, string>;
 }

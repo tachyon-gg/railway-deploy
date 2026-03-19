@@ -1,407 +1,604 @@
+/**
+ * Apply engine: stages and commits an EnvironmentConfig patch.
+ *
+ * The new pipeline is dramatically simpler than the old one:
+ * 1. Create new services (serviceCreate)
+ * 2. Create new volumes (volumeCreate)
+ * 3. Stage changes (environmentStageChanges)
+ * 4. Commit (environmentPatchCommitStaged)
+ * 5. Delete removed services (serviceDelete)
+ */
+
 import type { GraphQLClient } from "graphql-request";
-import type { ActiveServiceFeatureFlag, ServiceInstanceUpdateInput } from "../generated/graphql.js";
+import { logger } from "../logger.js";
 import {
-  addServiceFeatureFlag,
   clearEgressGateways,
+  commitStagedChanges,
   createBucket,
   createCustomDomain,
   createEgressGateway,
   createService,
   createServiceDomain,
-  createTcpProxy,
   createVolume,
   deleteCustomDomain,
+  deletePrivateNetworkEndpoint,
   deleteService,
   deleteServiceDomain,
-  deleteSharedVariable,
   deleteTcpProxy,
-  deleteVariable,
   deleteVolume,
-  removeServiceFeatureFlag,
-  updateDeploymentTrigger,
-  updateServiceInstance,
-  updateServiceInstanceLimits,
-  upsertSharedVariables,
-  upsertVariables,
+  renamePrivateNetworkEndpoint,
+  stageEnvironmentChanges,
+  updateCustomDomain,
+  updateServiceDomain,
+  updateVolume,
 } from "../railway/mutations.js";
-import type { Change, Changeset } from "../types/changeset.js";
-import { changeLabel } from "./format.js";
+import type { DomainInfo } from "../railway/queries.js";
+import {
+  fetchEnvironmentConfig,
+  fetchPrivateNetworkEndpoint,
+  fetchTcpProxyByPort,
+} from "../railway/queries.js";
+import type { ConfigDiff } from "../types/changeset.js";
+import type { EnvironmentConfig } from "../types/envconfig.js";
+import type { State } from "../types/state.js";
+import { buildServiceConfig } from "./config.js";
+import type { ApplyResult } from "./format.js";
 
-// Re-export for backwards compatibility
-export { printApplyResult, printChangeset } from "./format.js";
-
-interface ApplyResult {
-  applied: Change[];
-  failed: Array<{ change: Change; error: string }>;
-}
-
-interface ApplyOptions {
-  verbose?: boolean;
-  noColor?: boolean;
-}
-
-/** Extract a clean error message from GraphQL or network errors */
+/**
+ * Extract a clean error message from GraphQL or network errors.
+ */
 function extractErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   const msg = err.message;
 
-  // Try to parse structured GraphQL error response
   try {
     const parsed = "response" in err ? (err as { response: unknown }).response : undefined;
     if (parsed && typeof parsed === "object" && parsed !== null) {
-      const resp = parsed as { errors?: Array<{ message: string }>; body?: string };
+      const resp = parsed as { errors?: Array<{ message: string }> };
       const gqlMessage = resp.errors?.[0]?.message;
       if (gqlMessage && gqlMessage !== "Problem processing request") {
         return gqlMessage;
       }
     }
   } catch {
-    // Fall through to regex extraction
+    // Fall through
   }
 
-  // Fallback: extract "message" from stringified error
   const match = msg.match(/"message":"([^"]+)"/);
   if (match) return match[1];
   return msg;
 }
 
-// ANSI color helpers (used in apply output)
-function green(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[32m${text}\x1b[0m`;
-}
-function red(text: string, noColor: boolean): string {
-  return noColor ? text : `\x1b[31m${text}\x1b[0m`;
-}
-
 /**
- * Execute a changeset against Railway, applying each change sequentially
- * and tracking successes and failures.
- *
- * Newly created service IDs are tracked so that subsequent changes (variables,
- * domains, settings) for the same service can resolve the ID. Variable upserts
- * use `skipDeploys` per service — only each service's final variable upsert
- * triggers a deploy, avoiding unnecessary intermediate deployments.
- *
- * @param client - Authenticated GraphQL client.
- * @param changeset - The changes to apply (from {@link computeChangeset}).
- * @param projectId - Railway project ID.
- * @param environmentId - Railway environment ID.
- * @param options - Optional flags for verbose output and color control.
- * @returns Lists of successfully applied changes and failures with error messages.
+ * Apply a config diff by staging and committing an EnvironmentConfig patch.
  */
-export async function applyChangeset(
+export async function applyConfigDiff(
   client: GraphQLClient,
-  changeset: Changeset,
+  diff: ConfigDiff,
+  desiredConfigInput: EnvironmentConfig,
   projectId: string,
   environmentId: string,
-  options?: ApplyOptions,
+  desiredState: State,
+  serviceNameToId?: Map<string, string>,
+  options?: { stageOnly?: boolean },
+  serviceDomainByService?: Map<string, DomainInfo>,
+  customDomainsByService?: Map<string, DomainInfo[]>,
+  volumeIdByService?: Map<string, string>,
 ): Promise<ApplyResult> {
-  const applied: Change[] = [];
-  const failed: Array<{ change: Change; error: string }> = [];
-  const noColor = options?.noColor ?? false;
+  // Clone to avoid mutating the caller's config (safe for retries)
+  const desiredConfig: EnvironmentConfig = JSON.parse(JSON.stringify(desiredConfigInput));
 
-  // Track newly created service IDs so subsequent changes can reference them
-  const createdServiceIds = new Map<string, string>();
+  const result: ApplyResult = {
+    staged: false,
+    committed: false,
+    servicesCreated: [],
+    servicesDeleted: [],
+    volumesCreated: [],
+    errors: [],
+  };
 
-  // Find the last variable change index per service for skipDeploys optimization.
-  // Only the final variable upsert for each service should trigger a deploy.
-  const lastVarChangeByService = new Map<string, number>();
-  for (let i = 0; i < changeset.changes.length; i++) {
-    const c = changeset.changes[i];
-    if (c.type === "upsert-variables") {
-      lastVarChangeByService.set(c.serviceName, i);
-    }
+  // Ensure desiredConfig.services exists for mutations
+  if (!desiredConfig.services) {
+    desiredConfig.services = {};
   }
 
-  for (let i = 0; i < changeset.changes.length; i++) {
-    const change = changeset.changes[i];
-    let skipDeploys = false;
-    if (change.type === "upsert-variables") {
-      skipDeploys = i < (lastVarChangeByService.get(change.serviceName) ?? -1);
-    }
+  // Track IDs of newly created services for cleanup on failure
+  const createdServiceIds: Map<string, string> = new Map();
 
+  // Step 1: Create new services
+  for (const svc of diff.servicesToCreate) {
     try {
-      await applyChange(client, change, projectId, environmentId, createdServiceIds, skipDeploys);
-      applied.push(change);
-      console.log(`  ${green("✓", noColor)} ${changeLabel(change)}`);
+      const created = await createService(
+        client,
+        projectId,
+        svc.name,
+        svc.source,
+        environmentId,
+        svc.branch,
+        svc.registryCredentials,
+      );
+      result.servicesCreated.push(svc.name);
+      createdServiceIds.set(svc.name, created.id);
+      logger.success(`Created service: ${svc.name} (${created.id})`);
+
+      // Build and add the new service's config to the patch
+      const svcState = desiredState.services[svc.name];
+      if (svcState) {
+        let volumeId: string | undefined;
+        // Create volume for new service if needed
+        if (svc.volume) {
+          try {
+            const vol = await createVolume(
+              client,
+              projectId,
+              created.id,
+              environmentId,
+              svc.volume.mount,
+            );
+            volumeId = vol.id;
+            if (svc.volume.name && vol.name !== svc.volume.name) {
+              await updateVolume(client, vol.id, svc.volume.name);
+            }
+            result.volumesCreated.push(svc.name);
+            logger.success(`Created volume for ${svc.name}: ${svc.volume.mount}`);
+          } catch (err) {
+            result.errors.push({
+              step: `create-volume:${svc.name}`,
+              error: extractErrorMessage(err),
+            });
+          }
+        }
+
+        desiredConfig.services[created.id] = buildServiceConfig(svcState, volumeId);
+      }
     } catch (err) {
-      const message = extractErrorMessage(err);
-      failed.push({ change, error: message });
-      console.log(`  ${red("✗", noColor)} ${changeLabel(change)} — ${message}`);
+      result.errors.push({
+        step: `create-service:${svc.name}`,
+        error: extractErrorMessage(err),
+      });
     }
   }
 
-  return { applied, failed };
-}
-
-async function applyChange(
-  client: GraphQLClient,
-  change: Change,
-  projectId: string,
-  environmentId: string,
-  createdServiceIds: Map<string, string>,
-  skipDeploys?: boolean,
-): Promise<void> {
-  switch (change.type) {
-    case "create-service": {
-      const result = await createService(
-        client,
-        projectId,
-        change.name,
-        change.source,
-        environmentId,
-        change.branch,
-        change.registryCredentials,
-      );
-      createdServiceIds.set(change.name, result.id);
-
-      // Create volume if specified
-      if (change.volume) {
-        await createVolume(client, projectId, result.id, environmentId, change.volume.mount);
-      }
-
-      // Update service instance settings if needed
-      if (change.cronSchedule) {
-        await updateServiceInstance(client, result.id, environmentId, {
-          cronSchedule: change.cronSchedule,
-        });
-      }
-      break;
-    }
-
-    case "delete-service":
-      await deleteService(client, change.serviceId);
-      break;
-
-    case "upsert-variables": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(
-          `No service ID for "${change.serviceName}" — service may not have been created yet`,
-        );
-      }
-      await upsertVariables(
-        client,
-        projectId,
-        environmentId,
-        serviceId,
-        change.variables,
-        skipDeploys,
-      );
-      break;
-    }
-
-    case "delete-variables": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      for (const name of change.variableNames) {
-        await deleteVariable(client, projectId, environmentId, serviceId, name);
-      }
-      break;
-    }
-
-    case "upsert-shared-variables":
-      await upsertSharedVariables(client, projectId, environmentId, change.variables, skipDeploys);
-      break;
-
-    case "delete-shared-variables":
-      for (const name of change.variableNames) {
-        await deleteSharedVariable(client, projectId, environmentId, name);
-      }
-      break;
-
-    case "create-domain": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await createCustomDomain(
-        client,
-        projectId,
-        serviceId,
-        environmentId,
-        change.domain,
-        change.targetPort,
-      );
-      break;
-    }
-
-    case "delete-domain":
-      await deleteCustomDomain(client, change.domainId);
-      break;
-
-    case "update-service-settings": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      const input: ServiceInstanceUpdateInput = {};
-      if (change.settings.source !== undefined) {
-        input.source = change.settings.source;
-      }
-      if (change.settings.restartPolicy !== undefined) {
-        input.restartPolicyType = change.settings
-          .restartPolicy as ServiceInstanceUpdateInput["restartPolicyType"];
-      }
-      if (change.settings.healthcheck !== undefined) {
-        if (change.settings.healthcheck) {
-          input.healthcheckPath = change.settings.healthcheck.path;
-          input.healthcheckTimeout = change.settings.healthcheck.timeout;
-        } else {
-          input.healthcheckPath = null;
-          input.healthcheckTimeout = null;
-        }
-      }
-      if (change.settings.cronSchedule !== undefined) {
-        input.cronSchedule = change.settings.cronSchedule;
-      }
-      if (change.settings.region !== undefined) {
-        if (change.settings.region) {
-          input.region = change.settings.region.region;
-          input.numReplicas = change.settings.region.numReplicas;
-        } else {
-          input.region = null;
-          input.numReplicas = null;
-        }
-      }
-      if (change.settings.startCommand !== undefined)
-        input.startCommand = change.settings.startCommand;
-      if (change.settings.buildCommand !== undefined)
-        input.buildCommand = change.settings.buildCommand;
-      if (change.settings.rootDirectory !== undefined)
-        input.rootDirectory = change.settings.rootDirectory;
-      if (change.settings.dockerfilePath !== undefined)
-        input.dockerfilePath = change.settings.dockerfilePath;
-      if (change.settings.preDeployCommand !== undefined)
-        input.preDeployCommand = change.settings.preDeployCommand;
-      if (change.settings.restartPolicyMaxRetries !== undefined)
-        input.restartPolicyMaxRetries = change.settings.restartPolicyMaxRetries;
-      if (change.settings.sleepApplication !== undefined)
-        input.sleepApplication = change.settings.sleepApplication;
-      if (change.settings.builder !== undefined)
-        input.builder = change.settings.builder as ServiceInstanceUpdateInput["builder"];
-      if (change.settings.watchPatterns !== undefined)
-        input.watchPatterns = change.settings.watchPatterns;
-      if (change.settings.drainingSeconds !== undefined)
-        input.drainingSeconds = change.settings.drainingSeconds;
-      if (change.settings.overlapSeconds !== undefined)
-        input.overlapSeconds = change.settings.overlapSeconds;
-      if (change.settings.ipv6EgressEnabled !== undefined)
-        input.ipv6EgressEnabled = change.settings.ipv6EgressEnabled;
-      if (change.settings.registryCredentials !== undefined)
-        input.registryCredentials = change.settings.registryCredentials;
-      if (change.settings.railwayConfigFile !== undefined)
-        input.railwayConfigFile = change.settings.railwayConfigFile;
-
-      await updateServiceInstance(client, serviceId, environmentId, input);
-      break;
-    }
-
-    case "create-volume": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await createVolume(client, projectId, serviceId, environmentId, change.mount);
-      break;
-    }
-
-    case "delete-volume":
-      await deleteVolume(client, change.volumeId);
-      break;
-
-    case "create-bucket":
-      await createBucket(client, projectId, change.bucketName);
-      break;
-
-    case "update-deployment-trigger": {
-      const triggerInput: import("../generated/graphql.js").DeploymentTriggerUpdateInput = {};
-      if (change.branch) triggerInput.branch = change.branch;
-      if (change.checkSuites !== undefined) triggerInput.checkSuites = change.checkSuites;
-      await updateDeploymentTrigger(client, change.triggerId, triggerInput);
-      break;
-    }
-
-    case "create-service-domain": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await createServiceDomain(client, serviceId, environmentId, change.targetPort);
-      break;
-    }
-
-    case "delete-service-domain":
-      await deleteServiceDomain(client, change.domainId);
-      break;
-
-    case "create-tcp-proxy": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await createTcpProxy(client, serviceId, environmentId, change.applicationPort);
-      break;
-    }
-
-    case "delete-tcp-proxy":
-      await deleteTcpProxy(client, change.proxyId);
-      break;
-
-    case "update-service-limits": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await updateServiceInstanceLimits(client, serviceId, environmentId, change.limits);
-      break;
-    }
-
-    case "enable-static-ips": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await createEgressGateway(client, serviceId, environmentId);
-      break;
-    }
-
-    case "disable-static-ips": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await clearEgressGateways(client, serviceId, environmentId);
-      break;
-    }
-
-    case "enable-service-feature-flag": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await addServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
-      break;
-    }
-
-    case "disable-service-feature-flag": {
-      const serviceId = change.serviceId || createdServiceIds.get(change.serviceName);
-      if (!serviceId) {
-        throw new Error(`No service ID for "${change.serviceName}"`);
-      }
-      await removeServiceFeatureFlag(client, serviceId, change.flag as ActiveServiceFeatureFlag);
-      break;
-    }
-
-    case "delete-bucket":
-      // Railway API doesn't support bucket deletion
-      throw new Error("Bucket deletion is not supported by the Railway API — delete manually");
-
-    default: {
-      const _exhaustive: never = change;
-      throw new Error(`Unknown change type: ${(_exhaustive as Change).type}`);
+  // Register newly created service IDs so later steps (egress, domains) can resolve them
+  if (serviceNameToId) {
+    for (const [name, id] of createdServiceIds) {
+      serviceNameToId.set(name, id);
     }
   }
+
+  // Step 1c: For newly created services with region config, null-inject Railway's
+  // auto-assigned default regions. Railway assigns a default region on service creation
+  // that we don't know about at diff time (service didn't exist yet).
+  if (createdServiceIds.size > 0) {
+    try {
+      const postCreateConfig = await fetchEnvironmentConfig(client, environmentId);
+      for (const [, svcId] of createdServiceIds) {
+        const currentMrc = (postCreateConfig.services?.[svcId]?.deploy as Record<string, unknown>)
+          ?.multiRegionConfig as Record<string, unknown> | undefined;
+        const desiredMrc = (desiredConfig.services?.[svcId]?.deploy as Record<string, unknown>)
+          ?.multiRegionConfig as Record<string, unknown> | undefined;
+        if (currentMrc && desiredMrc) {
+          for (const region of Object.keys(currentMrc)) {
+            if (!(region in desiredMrc)) {
+              (desiredMrc as Record<string, unknown>)[region] = null;
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — convergence will clean up on next run
+    }
+  }
+
+  // Track volume IDs created in Step 2 for cleanup on stage failure
+  const createdVolumeIds: Array<{ id: string; serviceName: string }> = [];
+
+  // Step 2: Create volumes for existing services that need new volumes
+  for (const vol of diff.volumesToCreate) {
+    try {
+      const created = await createVolume(
+        client,
+        projectId,
+        vol.serviceId,
+        environmentId,
+        vol.mount,
+      );
+      if (vol.name && created.name !== vol.name) {
+        await updateVolume(client, created.id, vol.name);
+      }
+      createdVolumeIds.push({ id: created.id, serviceName: vol.serviceName });
+      result.volumesCreated.push(vol.serviceName);
+      logger.success(`Created volume for ${vol.serviceName}: ${vol.mount}`);
+
+      // Add volumeMount to the service's config
+      const svcConfig = desiredConfig.services[vol.serviceId];
+      if (svcConfig) {
+        svcConfig.volumeMounts = svcConfig.volumeMounts || {};
+        svcConfig.volumeMounts[created.id] = { mountPath: vol.mount };
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `create-volume:${vol.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 2b: Create new buckets (can't be done via patches)
+  for (const [key, bucket] of Object.entries(desiredState.buckets)) {
+    if (bucket.id) continue; // Already exists
+    try {
+      const created = await createBucket(client, projectId, bucket.name);
+      // Update the desired config with the new bucket ID
+      desiredConfig.buckets = desiredConfig.buckets || {};
+      desiredConfig.buckets[created.id] = { region: bucket.region || "iad", isCreated: true };
+      logger.success(`Created bucket: ${bucket.name} (${created.id})`);
+    } catch (err) {
+      result.errors.push({
+        step: `create-bucket:${key}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 2.5: Null-inject removed collection items
+  //
+  // Settings (deploy.*, build.*, source.*, configFile, networking scalars) are
+  // already nulled by the config builder — no injection needed here.
+  //
+  // Collections (variables, shared vars, custom domains, TCP proxies, volume mounts)
+  // are keyed by dynamic names/IDs, so we must explicitly null removed items
+  // because merge:true only adds/updates — it won't delete omitted keys.
+  for (const entry of diff.entries) {
+    if (entry.action !== "remove") continue;
+
+    if (entry.category === "shared-variable") {
+      const varName = entry.path.split(".").pop();
+      if (varName) {
+        desiredConfig.sharedVariables = desiredConfig.sharedVariables || {};
+        (desiredConfig.sharedVariables as Record<string, unknown>)[varName] = null;
+      }
+    } else if (entry.category === "variable" && entry.serviceName && serviceNameToId) {
+      const svcId = serviceNameToId.get(entry.serviceName);
+      if (svcId && desiredConfig.services?.[svcId]) {
+        const varName = entry.path.split(".").pop();
+        if (varName) {
+          desiredConfig.services[svcId].variables = desiredConfig.services[svcId].variables || {};
+          (desiredConfig.services[svcId].variables as Record<string, unknown>)[varName] = null;
+        }
+      }
+      // "domain" and "railway-domain" categories are handled via separate mutations
+      // in steps 4.6 and 4.7, not via null-injection in the patch.
+    } else if (
+      entry.category === "setting" &&
+      entry.path.startsWith("deploy.multiRegionConfig.") &&
+      entry.serviceName &&
+      serviceNameToId
+    ) {
+      // Region keys are a collection — need per-key null to remove old regions
+      const svcId = serviceNameToId.get(entry.serviceName);
+      if (svcId && desiredConfig.services?.[svcId]) {
+        const region = entry.path.slice("deploy.multiRegionConfig.".length);
+        const svcCfg = desiredConfig.services[svcId];
+        svcCfg.deploy = svcCfg.deploy || {};
+        const mrc =
+          ((svcCfg.deploy as Record<string, unknown>).multiRegionConfig as Record<
+            string,
+            unknown
+          >) || {};
+        mrc[region] = null;
+        (svcCfg.deploy as Record<string, unknown>).multiRegionConfig = mrc;
+      }
+    }
+    // "volume" remove entries: handled post-commit via volumeDelete (step 4.8)
+    // TCP proxy removal: handled pre-stage via Step 2.6
+    // "setting" category: already nulled by config builder — no injection needed
+    // "service" category: handled by step 5 (deleteService)
+  }
+
+  // Step 2.6: Delete old TCP proxy before staging.
+  // Railway only supports one TCP proxy per service. Patches can create but not remove.
+  // We must delete the old proxy before staging so the patch can create the new one.
+  // For --stage mode, skip (deletion is a real mutation — noted in the stage message).
+  if (!options?.stageOnly) {
+    for (const entry of diff.entries) {
+      if (
+        entry.category === "setting" &&
+        entry.path.startsWith("networking.tcpProxies.") &&
+        entry.action === "remove" &&
+        entry.serviceName &&
+        serviceNameToId
+      ) {
+        const svcId = serviceNameToId.get(entry.serviceName);
+        const oldPort = Number(entry.path.slice("networking.tcpProxies.".length));
+        if (svcId && !Number.isNaN(oldPort)) {
+          try {
+            const proxy = await fetchTcpProxyByPort(client, svcId, environmentId, oldPort);
+            if (proxy) {
+              await deleteTcpProxy(client, proxy.id);
+              logger.success(`Deleted TCP proxy ${oldPort} for ${entry.serviceName}`);
+            }
+          } catch (err) {
+            result.errors.push({
+              step: `tcp-proxy-delete:${entry.serviceName}`,
+              error: extractErrorMessage(err),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Step 3: Stage changes
+  if (diff.entries.length > 0 || Object.keys(desiredConfig.services).length > 0) {
+    try {
+      await stageEnvironmentChanges(client, environmentId, desiredConfig, true);
+      result.staged = true;
+      logger.success("Changes staged");
+    } catch (err) {
+      result.errors.push({
+        step: "stage",
+        error: extractErrorMessage(err),
+      });
+
+      // Clean up orphaned services created in step 1
+      for (const [svcName, svcId] of createdServiceIds) {
+        try {
+          await deleteService(client, svcId);
+          logger.warn(`Cleaned up orphaned service: ${svcName}`);
+        } catch {
+          // Best-effort cleanup
+        }
+      }
+
+      // Clean up orphaned volumes created in step 2
+      for (const vol of createdVolumeIds) {
+        try {
+          await deleteVolume(client, vol.id);
+          logger.warn(`Cleaned up orphaned volume for ${vol.serviceName}`);
+        } catch {
+          logger.warn(
+            `Orphaned volume for ${vol.serviceName} (ID: ${vol.id}) — delete manually in Railway dashboard`,
+          );
+        }
+      }
+
+      return result; // Can't commit if stage failed
+    }
+  }
+
+  // Stage-only mode: stop here — don't commit, don't delete services, don't touch egress
+  if (options?.stageOnly) {
+    if (result.staged) {
+      const postCommitNotes: string[] = [];
+      if (diff.entries.some((e) => e.path === "staticOutboundIps")) {
+        postCommitNotes.push("static outbound IP changes");
+      }
+      if (
+        diff.entries.some(
+          (e) => e.path.startsWith("networking.tcpProxies.") && e.action === "remove",
+        )
+      ) {
+        postCommitNotes.push("TCP proxy removal");
+      }
+      const note =
+        postCommitNotes.length > 0 ? ` Note: ${postCommitNotes.join(", ")} require --apply.` : "";
+      logger.info(
+        `Changes staged. Review in Railway dashboard, then run --apply to commit.${note}`,
+      );
+    }
+    return result;
+  }
+
+  // Step 4: Commit
+  if (result.staged) {
+    try {
+      await commitStagedChanges(client, environmentId);
+      result.committed = true;
+      logger.success("Changes committed");
+    } catch (err) {
+      result.errors.push({
+        step: "commit",
+        error: extractErrorMessage(err),
+      });
+      return result; // Don't proceed to deletions if commit failed
+    }
+  }
+
+  // TCP proxy deletion is handled pre-stage in Step 2.6 (must happen before patch
+  // so the patch can create the new proxy on port changes).
+
+  // Step 4.5: Handle static outbound IPs (egress gateways — separate from patch system)
+  for (const entry of diff.entries) {
+    if (entry.path !== "staticOutboundIps" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId =
+      serviceNameToId.get(entry.serviceName) ?? createdServiceIds.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add") {
+        await createEgressGateway(client, svcId, environmentId);
+        logger.success(`Enabled static outbound IPs for ${entry.serviceName}`);
+      } else if (entry.action === "remove") {
+        await clearEgressGateways(client, svcId, environmentId);
+        logger.success(`Disabled static outbound IPs for ${entry.serviceName}`);
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `egress:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.6: Handle railway domains (service domains — separate from patch system)
+  for (const entry of diff.entries) {
+    if (entry.category !== "railway-domain" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId = serviceNameToId.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add") {
+        const port = desiredState.services[entry.serviceName]?.railwayDomain?.targetPort;
+        const created = await createServiceDomain(client, svcId, environmentId, port);
+        logger.success(`Created railway domain for ${entry.serviceName}: ${created.domain}`);
+      } else if (entry.action === "remove") {
+        const domainInfo = serviceDomainByService?.get(entry.serviceName);
+        if (domainInfo) {
+          await deleteServiceDomain(client, domainInfo.id);
+          logger.success(`Deleted railway domain for ${entry.serviceName}: ${domainInfo.domain}`);
+        }
+      } else if (entry.action === "update") {
+        const domainInfo = serviceDomainByService?.get(entry.serviceName);
+        if (domainInfo) {
+          const port = desiredState.services[entry.serviceName]?.railwayDomain?.targetPort;
+          await updateServiceDomain(client, {
+            serviceDomainId: domainInfo.id,
+            serviceId: svcId,
+            environmentId,
+            domain: domainInfo.domain,
+            targetPort: port,
+          });
+          logger.success(`Updated railway domain port for ${entry.serviceName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `railway-domain:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.7: Handle custom domains (separate mutations, not patches)
+  for (const entry of diff.entries) {
+    if (entry.category !== "domain" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId = serviceNameToId.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add") {
+        const domainPrefix = "networking.customDomains.";
+        const domain = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const port =
+          entry.newValue && typeof entry.newValue === "object" && "port" in entry.newValue
+            ? (entry.newValue as { port: number }).port
+            : undefined;
+        await createCustomDomain(client, projectId, svcId, environmentId, domain, port);
+        logger.success(`Created custom domain: ${domain}`);
+      } else if (entry.action === "remove") {
+        const domainPrefix = "networking.customDomains.";
+        const domainName = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const currentDomains = customDomainsByService?.get(entry.serviceName) ?? [];
+        const domainInfo = currentDomains.find((d) => d.domain === domainName);
+        if (domainInfo) {
+          await deleteCustomDomain(client, domainInfo.id);
+          logger.success(`Deleted custom domain: ${domainName}`);
+        }
+      } else if (entry.action === "update") {
+        const domainPrefix = "networking.customDomains.";
+        const domainName = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const currentDomains = customDomainsByService?.get(entry.serviceName) ?? [];
+        const domainInfo = currentDomains.find((d) => d.domain === domainName);
+        if (domainInfo) {
+          const port =
+            entry.newValue && typeof entry.newValue === "object" && "port" in entry.newValue
+              ? (entry.newValue as { port: number }).port
+              : undefined;
+          await updateCustomDomain(client, domainInfo.id, environmentId, port);
+          logger.success(`Updated custom domain: ${domainName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `custom-domain:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.75: Handle private network endpoints (dedicated mutations)
+  for (const entry of diff.entries) {
+    if (entry.category !== "private-hostname" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId =
+      serviceNameToId.get(entry.serviceName) ?? createdServiceIds.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add" || entry.action === "update") {
+        // Fetch current endpoint to get its ID and private network ID.
+        // For newly created services, Railway may not have assigned an endpoint yet,
+        // so we retry with exponential backoff (1s, 2s, 4s).
+        let resolved = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+        if (!resolved) {
+          for (const delay of [1000, 2000, 4000]) {
+            await new Promise((r) => setTimeout(r, delay));
+            resolved = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+            if (resolved) break;
+          }
+        }
+        if (resolved) {
+          await renamePrivateNetworkEndpoint(
+            client,
+            resolved.id,
+            entry.newValue as string,
+            resolved.privateNetworkId,
+          );
+          logger.success(`Set private hostname for ${entry.serviceName}: ${entry.newValue}`);
+        } else {
+          result.errors.push({
+            step: `private-hostname:${entry.serviceName}`,
+            error: "Could not find private network endpoint to rename",
+          });
+        }
+      } else if (entry.action === "remove") {
+        const endpoint = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+        if (endpoint) {
+          await deletePrivateNetworkEndpoint(client, endpoint.id);
+          logger.success(`Removed private hostname for ${entry.serviceName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `private-hostname:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.8: Handle volume mount removal (volumeDelete — separate from patch system)
+  for (const entry of diff.entries) {
+    if (entry.category !== "volume" || entry.action !== "remove" || !entry.serviceName) continue;
+    const volId = entry.path.split(".").pop();
+    if (!volId) continue;
+    // Also check volumeIdByService for the volume ID
+    const resolvedVolId = volumeIdByService?.get(entry.serviceName) ?? volId;
+    try {
+      await deleteVolume(client, resolvedVolId);
+      logger.success(`Deleted volume for ${entry.serviceName}`);
+    } catch (err) {
+      result.errors.push({
+        step: `delete-volume:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 5: Delete removed services
+  for (const svc of diff.servicesToDelete) {
+    try {
+      await deleteService(client, svc.serviceId);
+      result.servicesDeleted.push(svc.name);
+      logger.success(`Deleted service: ${svc.name}`);
+    } catch (err) {
+      result.errors.push({
+        step: `delete-service:${svc.name}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  return result;
 }

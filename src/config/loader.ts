@@ -1,17 +1,21 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { parse as parseYaml } from "yaml";
-import type {
-  DomainEntry,
-  EnvironmentConfig,
-  ServiceEntry,
-  ServiceTemplate,
-} from "../types/config.js";
-import type { ServiceState, State } from "../types/state.js";
+import { logger } from "../logger.js";
+import type { BucketState, ServiceState, State, VolumeState } from "../types/state.js";
 import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
 import { expandParamsDeep, resolveParams } from "./params.js";
+import type {
+  DomainEntry,
+  ProjectServiceEntry,
+  ServiceEntry,
+  ServiceEnvironmentOverride,
+  ServiceFields,
+  ServiceTemplate,
+  SharedVariableEntry,
+} from "./schema.js";
 import {
-  validateEnvironmentConfig,
+  validateProjectConfig,
   validateResolvedService,
   validateServiceTemplate,
 } from "./schema.js";
@@ -38,17 +42,143 @@ function normalizeDomains(domains?: DomainEntry[]): Array<{ domain: string; targ
   return domains.map(normalizeDomainEntry);
 }
 
+/** Keys that are shallow-merged (override keys added to/replace defaults). */
+const SHALLOW_MERGE_KEYS = ["params", "variables"] as const;
+
 /**
- * Load an environment YAML file, resolve templates and parameters, and produce
- * the desired {@link State} for reconciliation.
+ * Merge a service's default fields with a per-environment override.
  *
- * @param envFilePath - Path to the environment YAML config file.
- * @returns The desired state, deleted variable lists (for explicit `null` overrides),
- *          and the project/environment names from the config.
- * @throws On missing file, invalid YAML, schema validation failure, or missing template.
+ * - `params`, `variables`: shallow merge (override keys replace defaults)
+ * - All other fields: override replaces entirely
+ * - `environments` key is stripped from the result
  */
-export function loadEnvironmentConfig(
-  envFilePath: string,
+export function mergeServiceEntry(
+  defaults: ProjectServiceEntry,
+  override?: ServiceEnvironmentOverride,
+): ServiceEntry {
+  if (!override) {
+    const { environments: _, ...entry } = defaults;
+    return entry;
+  }
+
+  const { environments: _, ...merged } = defaults;
+
+  // If the override changes the template, don't merge default params — they belong to the old template
+  const templateChanged = override.template !== undefined && override.template !== merged.template;
+
+  // Shallow-merge params and variables
+  for (const key of SHALLOW_MERGE_KEYS) {
+    if (templateChanged && key === "params") {
+      // Use override params exclusively for the new template
+      if (override.params) {
+        (merged as Record<string, unknown>).params = override.params;
+      } else {
+        delete (merged as Record<string, unknown>).params;
+      }
+    } else if (override[key]) {
+      (merged as Record<string, unknown>)[key] = { ...merged[key], ...override[key] };
+    }
+  }
+
+  // All other override fields replace entirely
+  for (const [key, value] of Object.entries(override)) {
+    if (
+      value !== undefined &&
+      !SHALLOW_MERGE_KEYS.includes(key as (typeof SHALLOW_MERGE_KEYS)[number])
+    ) {
+      (merged as Record<string, unknown>)[key] = value;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Resolve shared variables for a target environment.
+ *
+ * Supports two formats:
+ * - Simple string: same value for all environments
+ * - Object with value + environments: default value with per-env overrides
+ */
+function resolveSharedVariables(
+  sharedVars: Record<string, SharedVariableEntry> | undefined,
+  targetEnvironment: string,
+): Record<string, string | null> {
+  if (!sharedVars) return {};
+
+  const result: Record<string, string | null> = {};
+  for (const [key, entry] of Object.entries(sharedVars)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    } else {
+      // Check for per-env override
+      const envOverride = entry.environments?.[targetEnvironment];
+      result[key] = envOverride?.value ?? entry.value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Determine which services apply to a target environment.
+ *
+ * - Service has `environments` block → only exists in listed environments
+ * - Service has no `environments` block → exists in ALL declared environments
+ */
+function getServicesForEnvironment(
+  services: Record<string, ProjectServiceEntry>,
+  targetEnvironment: string,
+  declaredEnvironments: string[],
+): Record<string, ServiceEntry> {
+  const envSet = new Set(declaredEnvironments);
+  const result: Record<string, ServiceEntry> = {};
+  for (const [name, entry] of Object.entries(services)) {
+    if (entry.environments) {
+      // Warn about unrecognized environment keys (likely typos)
+      for (const key of Object.keys(entry.environments)) {
+        if (!envSet.has(key)) {
+          logger.warn(
+            `Service "${name}" has environment override "${key}" which is not in the declared environments (${declaredEnvironments.join(", ")})`,
+          );
+        }
+      }
+      // Service has environments block — only include if target is listed
+      if (targetEnvironment in entry.environments) {
+        result[name] = mergeServiceEntry(entry, entry.environments[targetEnvironment]);
+      }
+    } else {
+      // No environments block — include for all environments
+      result[name] = mergeServiceEntry(entry);
+    }
+  }
+  return result;
+}
+
+/**
+ * Resolve a top-level entry with per-env overrides by merging defaults with the target env.
+ */
+function mergeWithEnvOverride<T extends Record<string, unknown>>(
+  defaults: T & { environments?: Record<string, Partial<T>> },
+  targetEnvironment: string,
+): Omit<T, "environments"> {
+  const { environments, ...base } = defaults;
+  const override = environments?.[targetEnvironment];
+  if (!override) return base;
+  return { ...base, ...override };
+}
+
+/**
+ * Load a project YAML config file, resolve templates, parameters, and produce
+ * the desired {@link State} for a single target environment.
+ *
+ * @param projectFilePath - Path to the project YAML config file.
+ * @param targetEnvironment - The environment to resolve for.
+ * @param options - Optional flags (lenient mode for validation).
+ * @returns The desired state, deleted variable lists, and project/environment names.
+ */
+export function loadProjectConfig(
+  projectFilePath: string,
+  targetEnvironment: string,
   options?: { lenient?: boolean },
 ): {
   state: State;
@@ -56,13 +186,15 @@ export function loadEnvironmentConfig(
   deletedSharedVars: string[];
   projectName: string;
   environmentName: string;
+  /** All service names in config (across all environments), used to prevent deleting services scoped to other envs. */
+  allServiceNames: Set<string>;
 } {
-  const absPath = resolve(envFilePath);
+  const absPath = resolve(projectFilePath);
   if (!existsSync(absPath)) {
     throw new Error(`Config file not found: ${absPath}`);
   }
 
-  const envDir = dirname(absPath);
+  const configDir = dirname(absPath);
   let raw: string;
   try {
     raw = readFileSync(absPath, "utf-8");
@@ -81,66 +213,108 @@ export function loadEnvironmentConfig(
     );
   }
 
-  validateEnvironmentConfig(parsed);
-  const config = parsed as EnvironmentConfig;
+  const config = validateProjectConfig(parsed);
 
+  // Verify target environment is declared
+  if (!config.environments.includes(targetEnvironment)) {
+    throw new Error(
+      `Environment "${targetEnvironment}" is not declared in config. Available: ${config.environments.join(", ")}`,
+    );
+  }
+
+  // Resolve shared variables for this environment
+  const mergedSharedVars = resolveSharedVariables(config.shared_variables, targetEnvironment);
+  const deletedSharedVars = getDeletedVariables(mergedSharedVars);
+
+  const lenient = options?.lenient ?? false;
+  const resolvedSharedVars = resolveEnvVars(mergedSharedVars, process.env, lenient);
+
+  // Resolve services for this environment
+  const envServices = getServicesForEnvironment(
+    config.services,
+    targetEnvironment,
+    config.environments,
+  );
   const services: Record<string, ServiceState> = {};
   const deletedVars: Record<string, string[]> = {};
 
-  const lenient = options?.lenient ?? false;
-
-  for (const [name, entry] of Object.entries(config.services)) {
-    const { service, deleted } = resolveService(name, entry, envDir, lenient);
+  for (const [name, entry] of Object.entries(envServices)) {
+    const { service, deleted } = resolveService(name, entry, configDir, lenient);
     services[name] = service;
     if (deleted.length > 0) {
       deletedVars[name] = deleted;
     }
   }
 
-  // Resolve shared variables
-  const resolvedSharedVars = config.shared_variables
-    ? resolveEnvVars(config.shared_variables, process.env, lenient)
-    : {};
-  const deletedSharedVars = config.shared_variables
-    ? getDeletedVariables(config.shared_variables)
-    : [];
+  // Resolve volumes for this environment
+  const volumes: Record<string, VolumeState> = {};
+  if (config.volumes) {
+    for (const [key, volEntry] of Object.entries(config.volumes)) {
+      const resolved = mergeWithEnvOverride(volEntry, targetEnvironment);
+      volumes[key] = {
+        ...(resolved.size_mb !== undefined ? { sizeMB: resolved.size_mb } : {}),
+        ...(resolved.region ? { region: resolved.region } : {}),
+      };
+    }
+  }
 
-  // Parse buckets from config
-  const buckets: Record<string, { id: string; name: string }> = {};
+  // Validate volume references — every service volume.name must reference a declared volume
+  if (config.volumes) {
+    const declaredVolumes = new Set(Object.keys(config.volumes));
+    for (const [name, svc] of Object.entries(services)) {
+      if (svc.volume && !declaredVolumes.has(svc.volume.name)) {
+        throw new Error(
+          `Service "${name}" references volume "${svc.volume.name}" which is not declared in 'volumes:'.`,
+        );
+      }
+    }
+  }
+
+  // Resolve buckets for this environment
+  const buckets: Record<string, BucketState> = {};
   if (config.buckets) {
-    for (const [key, bucket] of Object.entries(config.buckets)) {
-      buckets[key] = { id: "", name: bucket.name };
+    for (const [key, bucketEntry] of Object.entries(config.buckets)) {
+      const resolved = mergeWithEnvOverride(bucketEntry, targetEnvironment);
+      buckets[key] = {
+        id: "",
+        name: key,
+        ...(resolved.region ? { region: resolved.region } : {}),
+      };
     }
   }
 
   return {
     state: {
-      projectId: "", // Resolved later from project name
-      environmentId: "", // Resolved later from environment name
+      projectId: "",
+      environmentId: "",
       sharedVariables: resolvedSharedVars,
       services,
+      volumes,
       buckets,
     },
     deletedVars,
     deletedSharedVars,
     projectName: config.project,
-    environmentName: config.environment,
+    environmentName: targetEnvironment,
+    allServiceNames: new Set(Object.keys(config.services)),
   };
 }
 
 /**
  * Resolve a single service entry (with optional template) into ServiceState.
+ * Templates are plain service defaults — entry fields override template fields
+ * using the same merge rules as environment overrides.
  */
 function resolveService(
   name: string,
   entry: ServiceEntry,
-  envDir: string,
+  configDir: string,
   lenient = false,
 ): { service: ServiceState; deleted: string[] } {
-  let template: ServiceTemplate | undefined;
+  let templateFields: ServiceTemplate | undefined;
 
   if (entry.template) {
-    const templatePath = resolve(envDir, entry.template);
+    const templatePath = resolve(configDir, entry.template);
     if (!existsSync(templatePath)) {
       throw new Error(`Template not found: ${templatePath} (referenced by service "${name}")`);
     }
@@ -160,90 +334,109 @@ function resolveService(
         `Invalid YAML in template ${templatePath}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    validateServiceTemplate(parsed, templatePath);
-    template = parsed as ServiceTemplate;
+    templateFields = validateServiceTemplate(parsed, templatePath);
   }
 
-  // Resolve params if template has param defs
-  // service_name is a built-in param — always set to the service's config key
-  if ("service_name" in (entry.params ?? {}) || "service_name" in (template?.params ?? {})) {
+  // Resolve params and expand %{param} in template values, then merge with entry.
+  // service_name is a built-in param — always set to the service's config key.
+  if ("service_name" in (entry.params ?? {}) || "service_name" in (templateFields?.params ?? {})) {
     throw new Error(
       `"service_name" is a built-in parameter and cannot be overridden (service "${name}")`,
     );
   }
-  let params: Record<string, string> = { service_name: name };
-  if (template?.params) {
-    params = { ...resolveParams(template.params, entry.params || {}), service_name: name };
+  let merged: ServiceFields;
+  if (templateFields) {
+    // Resolve params: template defs + entry values
+    let params: Record<string, string> = { service_name: name };
+    if (templateFields.params) {
+      params = { ...resolveParams(templateFields.params, entry.params || {}), service_name: name };
+    }
+    // Expand %{param} in template values (strings only — enums are protected by schema)
+    const { params: _tp, ...expandable } = templateFields;
+    const expanded = expandParamsDeep(expandable, params) as ServiceFields;
+
+    // Merge: entry overrides expanded template
+    const { template: _, params: _ep, ...entryFields } = entry;
+    const base = { ...expanded };
+    // Shallow-merge variables
+    if (entryFields.variables) {
+      (base as Record<string, unknown>).variables = {
+        ...expanded.variables,
+        ...entryFields.variables,
+      };
+    }
+    // All other entry fields replace entirely
+    for (const [key, value] of Object.entries(entryFields)) {
+      if (value !== undefined && key !== "variables") {
+        (base as Record<string, unknown>)[key] = value;
+      }
+    }
+    merged = base;
+  } else {
+    const { template: _, params: _ep, ...entryFields } = entry;
+    merged = entryFields;
   }
 
-  // Start with template values, expand %{param} placeholders (only in template values)
-  let source = template?.source ? expandParamsDeep(template.source, params) : entry.source;
-  const volume = template?.volume ? expandParamsDeep(template.volume, params) : entry.volume;
-  const region = template?.region ? expandParamsDeep(template.region, params) : entry.region;
-  const restartPolicy = template?.restart_policy
-    ? expandParamsDeep(template.restart_policy, params)
-    : entry.restart_policy;
-  const healthcheck = template?.healthcheck
-    ? expandParamsDeep(template.healthcheck, params)
-    : entry.healthcheck;
-  const cronSchedule = template?.cron_schedule
-    ? expandParamsDeep(template.cron_schedule, params)
-    : entry.cron_schedule;
-  const startCommand = template?.start_command
-    ? expandParamsDeep(template.start_command, params)
-    : entry.start_command;
-  const buildCommand = template?.build_command
-    ? expandParamsDeep(template.build_command, params)
-    : entry.build_command;
-  const rootDirectory = template?.root_directory
-    ? expandParamsDeep(template.root_directory, params)
-    : entry.root_directory;
-  const dockerfilePath = template?.dockerfile_path
-    ? expandParamsDeep(template.dockerfile_path, params)
-    : entry.dockerfile_path;
-  const preDeployCommand = template?.pre_deploy_command
-    ? expandParamsDeep(template.pre_deploy_command, params)
-    : entry.pre_deploy_command;
-  const restartPolicyMaxRetries =
-    template?.restart_policy_max_retries ?? entry.restart_policy_max_retries;
-  const sleepApplication = template?.sleep_application ?? entry.sleep_application;
-  const builder = template?.builder ? expandParamsDeep(template.builder, params) : entry.builder;
-  const watchPatterns = template?.watch_patterns
-    ? expandParamsDeep(template.watch_patterns, params)
-    : entry.watch_patterns;
-  const drainingSeconds = template?.draining_seconds ?? entry.draining_seconds;
-  const overlapSeconds = template?.overlap_seconds ?? entry.overlap_seconds;
-  const ipv6Egress = template?.ipv6_egress ?? entry.ipv6_egress;
-  const branch = template?.branch ? expandParamsDeep(template.branch, params) : entry.branch;
-  const checkSuites = template?.check_suites ?? entry.check_suites;
-  const registryCredentials = template?.registry_credentials ?? entry.registry_credentials;
-  const railwayDomain = template?.railway_domain ?? entry.railway_domain;
-  const tcpProxies = template?.tcp_proxies ?? entry.tcp_proxies;
-  const limits = template?.limits ?? entry.limits;
-  const railwayConfigFile = template?.railway_config_file
-    ? expandParamsDeep(template.railway_config_file, params)
-    : entry.railway_config_file;
-  const staticOutboundIps = template?.static_outbound_ips ?? entry.static_outbound_ips;
-  const metal = template?.metal ?? entry.metal;
-
-  // Normalize domains from template and entry
-  let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
-  if (template?.domains) {
-    templateDomains = normalizeDomains(expandParamsDeep(template.domains, params) as DomainEntry[]);
+  const source = merged.source;
+  const build = merged.build;
+  const volume = merged.volume;
+  const regionsRaw = merged.regions;
+  const restartPolicyRaw = merged.restart_policy;
+  const healthcheck = merged.healthcheck;
+  const cronSchedule = merged.cron_schedule;
+  const startCommand = merged.start_command;
+  const preDeployCommand = merged.pre_deploy_command;
+  // Parse restart_policy: string shorthand or object form
+  const RESTART_POLICY_MAP: Record<string, string> = {
+    always: "ALWAYS",
+    never: "NEVER",
+    on_failure: "ON_FAILURE",
+  };
+  let restartPolicy: string | undefined;
+  let restartPolicyMaxRetries: number | undefined;
+  if (typeof restartPolicyRaw === "string") {
+    restartPolicy = RESTART_POLICY_MAP[restartPolicyRaw] ?? restartPolicyRaw;
+  } else if (restartPolicyRaw) {
+    restartPolicy = RESTART_POLICY_MAP[restartPolicyRaw.type] ?? restartPolicyRaw.type;
+    if (restartPolicyRaw.max_retries !== undefined)
+      restartPolicyMaxRetries = restartPolicyRaw.max_retries;
   }
-  const entryDomains = normalizeDomains(entry.domains);
+  const serverless = merged.serverless;
+  const BUILDER_MAP: Record<string, string> = {
+    railpack: "RAILPACK",
+    nixpacks: "NIXPACKS",
+    dockerfile: "DOCKERFILE",
+  };
+  // Read build fields from nested build object (discriminated by builder type)
+  const builderRaw = build?.builder;
+  const builder = builderRaw ? (BUILDER_MAP[builderRaw] ?? builderRaw) : undefined;
+  const buildCommand = build && "command" in build ? build.command : undefined;
+  const dockerfilePath = build && "dockerfile_path" in build ? build.dockerfile_path : undefined;
+  const watchPatterns = build?.watch_patterns;
+  const drainingSeconds = merged.draining_seconds;
+  const overlapSeconds = merged.overlap_seconds;
+  const ipv6Egress = merged.ipv6_egress;
+  // Read source-nested fields (discriminated by image vs repo)
+  const branch = source && "branch" in source ? source.branch : undefined;
+  const rootDirectory = source && "root_directory" in source ? source.root_directory : undefined;
+  const waitForCi = source && "wait_for_ci" in source ? source.wait_for_ci : undefined;
+  const registryCredentials =
+    source && "registry_credentials" in source ? source.registry_credentials : undefined;
+  const autoUpdates = source && "auto_updates" in source ? source.auto_updates : undefined;
+  const railwayDomain = merged.railway_domain;
+  const tcpProxy = merged.tcp_proxy;
+  const limits = merged.limits;
+  const railwayConfigFile = merged.railway_config_file;
+  const staticOutboundIps = merged.static_outbound_ips;
+  const privateHostname = merged.private_hostname;
+  const metal = build && "metal" in build ? build.metal : undefined;
 
-  // Inline source override
-  if (entry.source) source = entry.source;
+  // Normalize domains
+  const domains = normalizeDomains(merged.domains);
 
-  // Entry domains override template domains if specified
-  const domains = entryDomains.length > 0 ? entryDomains : templateDomains;
-
-  // Merge variables: template vars (param-expanded) + env file vars
-  const templateVars = template?.variables ? expandParamsDeep(template.variables, params) : {};
+  // Merge variables (already merged above if template existed)
   const mergedVars: Record<string, string | null> = {
-    ...templateVars,
-    ...(entry.variables || {}),
+    ...(merged.variables || {}),
   };
 
   // Track deleted vars (null values) before resolving
@@ -272,13 +465,18 @@ function resolveService(
     domains: resolvedDomains,
   };
 
-  if (source) service.source = source;
-  if (volume) service.volume = { mount: volume.mount, name: volume.name };
-  if (region) {
-    service.region = {
-      region: region.region,
-      numReplicas: region.num_replicas ?? DEFAULT_NUM_REPLICAS,
+  if (source)
+    service.source = {
+      ...("image" in source ? { image: source.image } : {}),
+      ...("repo" in source ? { repo: source.repo } : {}),
     };
+  if (volume) service.volume = { name: volume.name, mount: volume.mount };
+  if (regionsRaw !== undefined) {
+    if (typeof regionsRaw === "string") {
+      service.regions = { [regionsRaw]: DEFAULT_NUM_REPLICAS };
+    } else {
+      service.regions = regionsRaw;
+    }
   }
   if (restartPolicy) service.restartPolicy = restartPolicy;
   if (healthcheck)
@@ -298,14 +496,14 @@ function resolveService(
   }
   if (restartPolicyMaxRetries !== undefined)
     service.restartPolicyMaxRetries = restartPolicyMaxRetries;
-  if (sleepApplication !== undefined) service.sleepApplication = sleepApplication;
+  if (serverless !== undefined) service.serverless = serverless;
   if (builder) service.builder = builder;
   if (watchPatterns) service.watchPatterns = watchPatterns;
   if (drainingSeconds !== undefined) service.drainingSeconds = drainingSeconds;
   if (overlapSeconds !== undefined) service.overlapSeconds = overlapSeconds;
   if (ipv6Egress !== undefined) service.ipv6EgressEnabled = ipv6Egress;
   if (branch) service.branch = branch;
-  if (checkSuites !== undefined) service.checkSuites = checkSuites;
+  if (waitForCi !== undefined) service.waitForCi = waitForCi;
   if (registryCredentials) {
     service.registryCredentials = {
       username: resolveEnvVarString(registryCredentials.username, process.env, lenient),
@@ -313,14 +511,9 @@ function resolveService(
     };
   }
   if (railwayDomain !== undefined) {
-    if (railwayDomain === true) {
-      service.railwayDomain = {};
-    } else if (typeof railwayDomain === "object") {
-      service.railwayDomain = { targetPort: railwayDomain.target_port };
-    }
-    // railwayDomain === false means no railway domain (don't set)
+    service.railwayDomain = { targetPort: railwayDomain.target_port };
   }
-  if (tcpProxies && tcpProxies.length > 0) service.tcpProxies = tcpProxies;
+  if (tcpProxy !== undefined) service.tcpProxy = tcpProxy;
   if (limits) {
     service.limits = {
       ...(limits.memory_gb !== undefined ? { memoryGB: limits.memory_gb } : {}),
@@ -329,6 +522,26 @@ function resolveService(
   }
   if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
   if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
+  if (privateHostname !== undefined) service.privateHostname = privateHostname;
+  if (autoUpdates) {
+    const dayNames = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ] as const;
+    const schedule: { day: number; startHour: number; endHour: number }[] = [];
+    for (let i = 0; i < dayNames.length; i++) {
+      const window = autoUpdates[dayNames[i]];
+      if (window) {
+        schedule.push({ day: i, startHour: window.start_hour, endHour: window.end_hour });
+      }
+    }
+    service.autoUpdates = { type: "patch", schedule };
+  }
   if (metal !== undefined) service.metal = metal;
 
   // Validate resolved values (after param expansion)

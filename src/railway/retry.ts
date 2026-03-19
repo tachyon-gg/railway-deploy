@@ -1,3 +1,5 @@
+import { logger } from "../logger.js";
+
 /**
  * Retry wrapper with exponential backoff for Railway API calls.
  */
@@ -25,7 +27,8 @@ function isRetryable(error: unknown): boolean {
       msg.includes("econnrefused") ||
       msg.includes("etimedout") ||
       msg.includes("fetch failed") ||
-      msg.includes("network")
+      msg.includes("network") ||
+      msg.includes("problem processing request")
     )
       return true;
   }
@@ -38,20 +41,19 @@ export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): P
     ...opts,
   };
 
-  let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (error) {
-      lastError = error;
       if (attempt >= maxRetries || !isRetryable(error)) {
         throw error;
       }
       const delay = Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
       const jitter = delay * (0.5 + Math.random() * 0.5);
-      console.warn(`  Retry ${attempt + 1}/${maxRetries} after ${Math.round(jitter)}ms...`);
+      logger.warn(`Retry ${attempt + 1}/${maxRetries} after ${Math.round(jitter)}ms...`);
       await new Promise((resolve) => setTimeout(resolve, jitter));
     }
   }
-  throw lastError;
+  // Unreachable: the loop always returns or throws
+  throw new Error("withRetry: unexpected end of retry loop");
 }

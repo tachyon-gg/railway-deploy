@@ -7,7 +7,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1)](https://bun.sh/)
 [![Biome](https://img.shields.io/badge/linter-Biome-60a5fa)](https://biomejs.dev/)
 
-Declarative infrastructure management for [Railway](https://railway.com). Define your Railway project's services, variables, domains, volumes, and buckets in YAML, and `railway-deploy` will diff against the live state and apply changes -- like Terraform, but purpose-built for Railway.
+Declarative infrastructure management for [Railway](https://railway.com). Define your Railway project's services, variables, domains, volumes, and buckets in YAML, and `railway-deploy` will diff against the live state and apply changes atomically -- like Terraform, but purpose-built for Railway.
 
 ## Quick start
 
@@ -16,21 +16,24 @@ Declarative infrastructure management for [Railway](https://railway.com). Define
 npx @tachyon-gg/railway-deploy --help
 
 # Validate a config file
-npx @tachyon-gg/railway-deploy --validate environments/production.yaml
+npx @tachyon-gg/railway-deploy --validate project.yaml
 
 # Dry-run (show what would change)
-npx @tachyon-gg/railway-deploy environments/production.yaml
+npx @tachyon-gg/railway-deploy project.yaml -e production
 
 # Apply changes
-npx @tachyon-gg/railway-deploy --apply environments/production.yaml
+npx @tachyon-gg/railway-deploy --apply -e production project.yaml
 ```
 
 ## CLI flags
 
 | Flag | Description |
 |------|-------------|
+| `-e, --environment <name>` | Target environment (required except for `--validate`) |
 | `--apply` | Execute changes (default: dry-run) |
+| `--stage` | Stage changes in Railway without committing (preview in dashboard) |
 | `-y, --yes` | Skip confirmation for destructive ops |
+| `--allow-data-loss` | Allow operations that can cause data loss (e.g., volume deletion) |
 | `--env-file <path>` | Load `.env` file for `${VAR}` resolution |
 | `-v, --verbose` | Show detailed diffs (old -> new values) |
 | `--no-color` | Disable ANSI color output |
@@ -46,111 +49,244 @@ npx @tachyon-gg/railway-deploy --apply environments/production.yaml
 
 ## Config reference
 
-Environment configs are YAML files describing the desired state of a Railway environment. Add schema support to your editor:
+Project configs are YAML files describing the desired state of a Railway project across one or more environments. Add schema support to your editor:
 
 ```yaml
-# yaml-language-server: $schema=./schemas/environment.schema.json
+# yaml-language-server: $schema=./schemas/project.schema.json
 ```
 
-### Top-level fields
+### Top-level structure
 
 ```yaml
-project: My Project          # Railway project name (must match exactly)
-environment: production      # Railway environment name
+project: My Project              # Railway project name (must match exactly)
+environments:                    # Environments to manage
+  - staging
+  - production
 
-shared_variables:            # Variables shared across all services
-  APP_ENV: production
-  API_PORT: "8080"
-
-services:                    # Map of service name -> config
-  web: { ... }
-  worker: { ... }
-
-buckets:                     # S3-compatible buckets
-  media:
-    name: media-uploads
+shared_variables: { ... }        # Variables shared across all services
+services: { ... }                # Service definitions
+volumes: { ... }                 # Persistent volume definitions
+buckets: { ... }                 # S3-compatible bucket definitions
 ```
 
-### Service configuration
+### Shared variables
 
-Each service can be defined inline or via a template:
+Shared variables are available to all services in an environment. Use the string shorthand for values that are the same everywhere, or the object form for per-environment overrides:
+
+```yaml
+shared_variables:
+  # String shorthand — same value in all environments
+  ADMIN_PORT: "8081"
+  PUBLIC_PORT: "8080"
+
+  # Object form — default value with per-environment overrides
+  JWT_SECRET:
+    value: ${JWT_SECRET_DEFAULT}
+    environments:
+      staging:
+        value: ${JWT_SECRET_STAGING}
+      production:
+        value: ${JWT_SECRET_PROD}
+```
+
+Supports `${ENV_VAR}` syntax (resolved from your local environment or `--env-file`) and `${{shared.OTHER_VAR}}` self-references.
+
+> **Note:** Shared variables cannot contain `${{service.VAR}}` cross-service references. Railway resolves shared variables without a service context.
+
+### Volumes
+
+Volumes are declared at the top level with optional per-environment overrides. Services reference them by name.
+
+```yaml
+volumes:
+  pg-data:
+    size_mb: 50000
+    region: us-east4
+    environments:
+      production:
+        size_mb: 100000
+
+  redis-data: {}                 # Minimal declaration — Railway defaults
+
+services:
+  postgres:
+    source:
+      image: postgres:17
+    volume:                      # Reference a declared volume
+      name: pg-data
+      mount: /var/lib/postgresql/data
+```
+
+Every volume referenced by a service must be declared in the `volumes` block.
+
+### Buckets
+
+S3-compatible Railway buckets. The key is the bucket name.
+
+```yaml
+buckets:
+  media-uploads:
+    region: iad
+    environments:
+      eu-production:
+        region: fra
+
+  logs: {}                       # Minimal — uses default region
+```
+
+### Services
+
+Each service defines defaults that apply to all environments. Per-environment overrides go under `environments.<name>`:
 
 ```yaml
 services:
-  # Inline service (Docker image)
+  web:
+    source:
+      repo: myorg/web-app
+    start_command: npm start
+    variables:
+      PORT: "3000"
+    environments:
+      staging:
+        source:
+          repo: myorg/web-app
+          branch: develop
+      production:
+        source:
+          repo: myorg/web-app
+          branch: main
+          wait_for_ci: true
+
+  # Service without environments block — exists in all environments
   redis:
     source:
       image: redis:7
-    variables:
-      ALLOW_EMPTY_PASSWORD: "yes"
 
-  # Inline service (GitHub repo)
-  api:
+  # Service scoped to specific environments
+  debug-tools:
     source:
-      repo: myorg/my-api
-    branch: main
-
-  # Template-based service
-  web:
-    template: ../services/web.yaml
-    params:
-      tag: v1.2.3
-    variables:
-      EXTRA_VAR: override-value
+      image: debug:latest
+    environments:
+      staging: {}                # Only in staging
 ```
 
-### Full service options
+#### Service scope rules
 
-Every option below can be used on both inline services and service templates.
+- Service **has** `environments` block -> only exists in environments listed there
+- Service **has no** `environments` block -> exists in ALL declared environments
+
+#### Merge rules
+
+When a service has per-environment overrides:
+
+| Field type | Merge behavior |
+|------------|---------------|
+| `params`, `variables` | Shallow merge (override keys replace defaults) |
+| `domains`, `source`, `volume`, `regions`, `healthcheck`, `build` | Replace entirely |
+| Scalar fields (`start_command`, etc.) | Override replaces |
+
+---
+
+### Service fields reference
+
+Every field below can be used on service defaults, per-environment overrides, and templates.
 
 #### Source
 
+Source is a discriminated union — use **either** `repo` or `image`, not both.
+
 ```yaml
+# Repo source — deploy from a GitHub repository
 source:
-  image: nginx:latest              # Docker image (Docker Hub, GHCR, etc.)
-  # OR
-  repo: myorg/my-repo              # GitHub repository
+  repo: myorg/my-repo
+  branch: main                   # Branch to deploy from
+  root_directory: /packages/api  # Root directory (monorepo support)
+  wait_for_ci: true              # Wait for GitHub Actions to pass before deploying
+```
 
-branch: main                       # Branch to deploy from (GitHub repos)
-check_suites: true                 # Wait for GitHub Actions to pass before deploying
-
-registry_credentials:              # For private container registries
-  username: ${REGISTRY_USER}
-  password: ${REGISTRY_PASS}
+```yaml
+# Image source — deploy from a container image
+source:
+  image: nginx:latest            # Docker image (Docker Hub, GHCR, etc.)
+  registry_credentials:          # For private container registries
+    username: ${REGISTRY_USER}
+    password: ${REGISTRY_PASS}
+  auto_updates:                  # Auto-update schedule for image-based services
+    monday:
+      start_hour: 0
+      end_hour: 6
+    friday:
+      start_hour: 0
+      end_hour: 6
 ```
 
 #### Build
 
+Build is a discriminated union — fields depend on the `builder` value.
+
 ```yaml
-builder: NIXPACKS                  # RAILPACK (default), NIXPACKS, HEROKU, PAKETO
-build_command: npm run build       # Custom build command
-dockerfile_path: Dockerfile.prod   # Path to Dockerfile (uses Railpack with Dockerfile)
-root_directory: /packages/api      # Root directory (monorepo support)
-watch_patterns:                    # File patterns that trigger deploys
-  - /packages/api/src/**
-  - /packages/shared/**
-railway_config_file: railway.toml  # Path to railway.json/toml for config-as-code
-metal: true                        # Enable Railway Metal builds (service-level, see note below)
+# Railpack (default)
+build:
+  builder: railpack
+  command: npm run build         # Custom build command
+  watch_patterns:                # File patterns that trigger deploys
+    - /packages/api/src/**
+  metal: true                    # Enable Metal build environment (faster builds)
 ```
 
-**Note:** Some settings are **service-level** in Railway (applied globally, not per-environment): `metal`, service creation, and service deletion. If you manage multiple environments for the same project, these settings will affect all environments regardless of which YAML file sets them.
+```yaml
+# Nixpacks
+build:
+  builder: nixpacks
+  command: npm run build
+  watch_patterns:
+    - /packages/api/src/**
+  metal: true
+```
+
+```yaml
+# Dockerfile
+build:
+  builder: dockerfile
+  dockerfile_path: Dockerfile.prod  # Path to Dockerfile
+  watch_patterns:
+    - /packages/api/src/**
+  metal: true
+```
+
+`railway_config_file` is a separate service-level field (not part of `build`):
+
+```yaml
+railway_config_file: railway.toml  # Path to railway.json/toml in the repository
+```
 
 #### Deploy
 
 ```yaml
-start_command: npm start           # Custom start command
-pre_deploy_command:                # Run before deployment (e.g., migrations)
+start_command: npm start         # Custom start command
+
+pre_deploy_command:              # Run before deployment (e.g., migrations)
   - npm run migrate
   - npm run seed
-cron_schedule: "*/5 * * * *"       # Cron schedule (for scheduled jobs)
-healthcheck:                       # HTTP healthcheck
+
+cron_schedule: "*/5 * * * *"     # Cron schedule (5-field format)
+                                 # Note: cron forces restart_policy to NEVER
+                                 # and disables serverless
+
+healthcheck:                     # HTTP healthcheck
   path: /health
-  timeout: 300                     # Timeout in seconds (default: 300)
-restart_policy: ON_FAILURE         # ALWAYS, NEVER, or ON_FAILURE
-restart_policy_max_retries: 10     # Max retries (only with ON_FAILURE)
-sleep_application: true            # Enable serverless sleeping
-draining_seconds: 30               # Graceful shutdown timeout (seconds between SIGTERM and SIGKILL)
-overlap_seconds: 10                # Blue-green deploy overlap duration
+  timeout: 300                   # Timeout in seconds (default: 300)
+
+# Restart policy — string shorthand or object with max_retries
+restart_policy: always           # always, never, or on_failure
+
+restart_policy:                  # Object form for on_failure with retries
+  type: on_failure
+  max_retries: 5
+
+serverless: true                 # Enable serverless sleeping (scale to zero when idle)
+draining_seconds: 30             # Graceful shutdown timeout (SIGTERM to SIGKILL)
+overlap_seconds: 10              # Blue-green deploy overlap duration
 ```
 
 #### Networking
@@ -158,31 +294,35 @@ overlap_seconds: 10                # Blue-green deploy overlap duration
 ```yaml
 # Custom domains
 domains:
-  - app.example.com                # Simple domain
-  - domain: api.example.com        # Domain with target port
+  - app.example.com              # Simple domain
+  - domain: api.example.com      # Domain with target port
     target_port: 8080
 
-# Railway-provided domain
-railway_domain: true               # Generate a .up.railway.app domain
-railway_domain:                    # ...with a specific target port
+# Railway-provided domain (*.up.railway.app)
+railway_domain:
   target_port: 3000
 
-# TCP proxies (for non-HTTP services like databases)
-tcp_proxies: [5432, 6379]          # One or more ports
+# TCP proxy (for non-HTTP services like databases)
+tcp_proxy: 5432
+
+# Private networking
+private_hostname: postgres       # Internal DNS hostname for service-to-service communication
 
 # Outbound networking
-ipv6_egress: true                  # Enable IPv6 outbound traffic
-static_outbound_ips: true          # Assign permanent outbound IP addresses
+ipv6_egress: true                # Enable IPv6 outbound traffic
+static_outbound_ips: true        # Assign permanent outbound IP addresses
 ```
 
 #### Scaling
 
 ```yaml
-region:                            # Deployment region
-  region: us-east-1
-  num_replicas: 3                  # Horizontal replicas (default: 1)
+regions: us-east4                # Single region (1 replica)
+# or
+regions:                         # Multi-region with replica counts
+  us-east4: 3
+  us-west1: 1
 
-limits:                            # Resource limits per replica
+limits:                          # Resource limits per replica
   memory_gb: 8
   vcpus: 4
 ```
@@ -190,9 +330,9 @@ limits:                            # Resource limits per replica
 #### Storage
 
 ```yaml
-volume:                            # Persistent volume
-  mount: /data                     # Mount path (must be absolute)
-  name: my-data
+volume:                          # Reference a top-level volume
+  name: pg-data                  # Must match a key in the volumes block
+  mount: /var/lib/postgresql/data # Absolute mount path
 ```
 
 #### Variables
@@ -215,25 +355,17 @@ variables:
 | `%{service_name}` | At config load time | Built-in: the service's config key |
 | `null` | N/A | Marks a variable for deletion |
 
-**Important:** Shared variables (`shared_variables`) cannot contain `${{service.VAR}}` references — Railway resolves shared variables without a service context, so cross-service references will resolve to empty strings. Use `${{service.VAR}}` references directly in service variables instead, and use shared variables only for plain values or `${{shared.OTHER_VAR}}` self-references.
-
-`%{param}` is expanded first, so it can be used inside `${{}}` Railway references. This is useful for templates that need to reference their own or other services' variables:
+`%{param}` is expanded first, so it can be used inside `${{}}` Railway references:
 
 ```yaml
 variables:
-  # Reference own service's variable (resolves %{service_name} at config time,
-  # Railway resolves the ${{}} reference at runtime)
   DATABASE_URL: ${{%{service_name}.DATABASE_URL}}
-
-  # Reference another service by param
   REDIS_URL: ${{%{cache_service}.REDIS_URL}}
 ```
 
 ### Service templates
 
-Templates extract reusable service definitions with parameterized values.
-
-The built-in `%{service_name}` param is always available and resolves to the service's key in the config (e.g., `web`, `api`). It cannot be overridden.
+Templates extract reusable service definitions with parameterized values. The built-in `%{service_name}` param resolves to the service's key in the config.
 
 ```yaml
 # services/web.yaml
@@ -258,105 +390,156 @@ healthcheck:
   path: /health
   timeout: 300
 
-region:
-  region: us-east-1
-  num_replicas: 1
+regions: us-east4
 ```
 
-Referenced from an environment config:
+Referenced from a project config:
 
 ```yaml
 services:
   web:
-    template: ../services/web.yaml
+    template: services/web.yaml
     params:
-      tag: v2.0.0
-      replicas: "3"
-    variables:
-      EXTRA: added-by-env      # Merged with template variables
-      APP_VERSION: null         # Deletes the template-defined variable
-    domains:
-      - production.example.com  # Overrides template domain
+      replicas: "1"
+    environments:
+      staging:
+        params:
+          tag: alpha
+      production:
+        params:
+          tag: v2.0.0
+          replicas: "3"
+        variables:
+          EXTRA: added-by-env
+          APP_VERSION: null           # Deletes the template-defined variable
+        domains:
+          - production.example.com    # Overrides template domains
 ```
-
-Template override precedence: environment config values override template values for `source`, `domains`, and `variables`.
 
 ### Complete example
 
 ```yaml
-# yaml-language-server: $schema=./schemas/environment.schema.json
+# yaml-language-server: $schema=./schemas/project.schema.json
 project: My SaaS App
-environment: production
+environments:
+  - staging
+  - production
 
 shared_variables:
-  APP_ENV: production
-  SENTRY_DSN: ${SENTRY_DSN}
+  APP_PORT: "3000"
+  SENTRY_DSN:
+    value: ${SENTRY_DSN_DEFAULT}
+    environments:
+      production:
+        value: ${SENTRY_DSN_PROD}
+
+volumes:
+  pg-data:
+    size_mb: 50000
+    environments:
+      production:
+        size_mb: 200000
+  redis-data: {}
+
+buckets:
+  uploads:
+    region: iad
 
 services:
   web:
     source:
       repo: myorg/web-app
-    branch: main
-    check_suites: true
-    builder: NIXPACKS
-    build_command: npm run build
+      root_directory: /packages/web
+    build:
+      builder: nixpacks
+      command: npm run build
+      metal: true
     start_command: npm start
-    root_directory: /packages/web
     pre_deploy_command: npm run migrate
     healthcheck:
       path: /health
       timeout: 60
-    restart_policy: ON_FAILURE
-    restart_policy_max_retries: 5
-    domains:
-      - app.example.com
-      - domain: api.example.com
-        target_port: 8080
-    railway_domain: true
-    region:
-      region: us-east-1
-      num_replicas: 2
-    limits:
-      memory_gb: 4
-      vcpus: 2
+    restart_policy:
+      type: on_failure
+      max_retries: 5
+    serverless: true
+    railway_domain:
+      target_port: 3000
     variables:
       PORT: "3000"
       DATABASE_URL: ${{Postgres.DATABASE_URL}}
+    environments:
+      staging:
+        source:
+          repo: myorg/web-app
+          branch: develop
+        domains:
+          - staging.example.com
+      production:
+        source:
+          repo: myorg/web-app
+          branch: main
+          wait_for_ci: true
+        domains:
+          - app.example.com
+          - domain: api.example.com
+            target_port: 8080
+        regions:
+          us-east4: 2
+        limits:
+          memory_gb: 4
+          vcpus: 2
 
   postgres:
     source:
-      image: postgres:16
+      image: postgres:17
+    private_hostname: postgres
     volume:
-      mount: /var/lib/postgresql/data
       name: pg-data
-    tcp_proxies: [5432]
+      mount: /var/lib/postgresql/data
+    tcp_proxy: 5432
     variables:
       POSTGRES_DB: myapp
 
   redis:
     source:
       image: redis:7-alpine
+    private_hostname: redis
     volume:
-      mount: /data
       name: redis-data
-    tcp_proxies: [6379]
+      mount: /data
+    tcp_proxy: 6379
 
   worker:
-    template: ../services/worker.yaml
+    template: services/worker.yaml
     params:
       queue: default
-    sleep_application: false
+    serverless: false
 
-buckets:
-  uploads:
-    name: user-uploads
+  cron:
+    source:
+      repo: myorg/web-app
+      root_directory: /packages/cron
+    cron_schedule: "0 0 * * *"
+    start_command: node scripts/cleanup.js
 ```
+
+## Known limitations
+
+- **Region management.** Setting `regions` deploys to those regions. Railway always maintains at least one region — the last region cannot be removed. Changing regions is supported (old regions are removed and new ones added). Multi-region is supported via a map of region to replica count.
+- **Service groups** are read-only. Railway's public API does not expose group creation -- groups can only be managed via the Railway dashboard. Existing groups are respected when reading config.
+- **Custom domains** may require DNS verification to take effect.
+- **Registry credentials** are write-only. Railway never returns credentials in config responses, so removal of registry credentials from your config is not detectable -- we simply stop sending them.
+- **Static outbound IPs** are managed via a separate API call (not atomic with the config patch). If the patch succeeds but the egress call fails, IPs may not be configured.
+- **Volume size/region** can only be set or increased, not cleared or reduced. Railway does not support shrinking volumes.
+- **Volume mount removal** is supported via the `volumeDelete` mutation and requires the `--allow-data-loss` flag, since it permanently deletes the volume and its data.
+- **Bucket deletion** is not supported by Railway's API. Buckets that are removed from config will be left in place with a warning.
 
 ## JSON schemas
 
 Editor support (autocompletion, validation) is available via JSON schemas:
 
-- `schemas/environment.schema.json` -- environment config files
+- `schemas/project.schema.json` -- project config files
 - `schemas/service-template.schema.json` -- service template files
 
 ## Development

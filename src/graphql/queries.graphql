@@ -18,17 +18,6 @@ query GetProject($id: String!) {
         node {
           id
           name
-          deploymentTriggers {
-            edges {
-              node {
-                id
-                branch
-                checkSuites
-                serviceId
-                repository
-              }
-            }
-          }
         }
       }
     }
@@ -37,15 +26,10 @@ query GetProject($id: String!) {
         node {
           id
           name
-          featureFlags
           serviceInstances {
             edges {
               node {
                 environmentId
-                source {
-                  image
-                  repo
-                }
                 domains {
                   customDomains {
                     id
@@ -58,36 +42,9 @@ query GetProject($id: String!) {
                     targetPort
                   }
                 }
-                region
-                numReplicas
-                restartPolicyType
-                restartPolicyMaxRetries
-                healthcheckPath
-                healthcheckTimeout
-                cronSchedule
-                startCommand
-                buildCommand
-                rootDirectory
-                dockerfilePath
-                preDeployCommand
-                sleepApplication
-                builder
-                watchPatterns
-                drainingSeconds
-                overlapSeconds
-                ipv6EgressEnabled
-                railwayConfigFile
               }
             }
           }
-        }
-      }
-    }
-    buckets {
-      edges {
-        node {
-          id
-          name
         }
       }
     }
@@ -109,38 +66,59 @@ query GetProject($id: String!) {
         }
       }
     }
+    buckets {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
   }
-}
-
-query GetVariables($projectId: String!, $environmentId: String!, $serviceId: String!) {
-  variables(
-    projectId: $projectId
-    environmentId: $environmentId
-    serviceId: $serviceId
-    unrendered: true
-  )
-}
-
-query GetSharedVariables($projectId: String!, $environmentId: String!) {
-  variables(projectId: $projectId, environmentId: $environmentId, unrendered: true)
-}
-
-query GetTcpProxies($serviceId: String!, $environmentId: String!) {
-  tcpProxies(serviceId: $serviceId, environmentId: $environmentId) {
-    id
-    applicationPort
-    proxyPort
-    domain
-  }
-}
-
-query GetServiceInstanceLimits($serviceId: String!, $environmentId: String!) {
-  serviceInstanceLimits(serviceId: $serviceId, environmentId: $environmentId)
 }
 
 query GetEgressGateways($serviceId: String!, $environmentId: String!) {
   egressGateways(serviceId: $serviceId, environmentId: $environmentId) {
     ipv4
     region
+  }
+}
+
+query GetEnvironmentConfig($environmentId: String!) {
+  environment(id: $environmentId) {
+    config(decryptVariables: true)
+  }
+}
+
+query GetTcpProxies($serviceId: String!, $environmentId: String!) {
+  tcpProxies(serviceId: $serviceId, environmentId: $environmentId) {
+    id
+    applicationPort
+    domain
+    proxyPort
+  }
+}
+
+query GetPrivateNetworks($environmentId: String!) {
+  privateNetworks(environmentId: $environmentId) {
+    publicId
+    name
+    dnsName
+  }
+}
+
+query GetPrivateNetworkEndpoint(
+  $environmentId: String!
+  $privateNetworkId: String!
+  $serviceId: String!
+) {
+  privateNetworkEndpoint(
+    environmentId: $environmentId
+    privateNetworkId: $privateNetworkId
+    serviceId: $serviceId
+  ) {
+    publicId
+    dnsName
+    serviceInstanceId
   }
 }

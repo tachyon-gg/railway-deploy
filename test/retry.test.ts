@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { logger } from "../src/logger.js";
 import { withRetry } from "../src/railway/retry.js";
 
 const fastOpts = { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 10 };
 
-let originalWarn: typeof console.warn;
-
 beforeEach(() => {
-  originalWarn = console.warn;
-  console.warn = () => {};
+  logger.mockTypes(() => () => {});
 });
 
 afterEach(() => {
-  console.warn = originalWarn;
+  logger.restoreAll();
 });
 
 describe("withRetry", () => {

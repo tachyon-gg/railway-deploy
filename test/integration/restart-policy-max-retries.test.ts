@@ -1,0 +1,67 @@
+import { afterAll, beforeAll, describe, expect } from "bun:test";
+import {
+  apply,
+  converges,
+  createTestEnvironment,
+  deleteTestEnvironment,
+  hasToken,
+  initClient,
+  itif,
+  svcName,
+  yaml,
+} from "./helpers.js";
+
+beforeAll(async () => {
+  initClient();
+  if (hasToken) await createTestEnvironment();
+});
+
+afterAll(async () => {
+  if (hasToken) await deleteTestEnvironment();
+});
+
+describe("Railway Integration — restart_policy_max_retries", () => {
+  const name = svcName("maxretries");
+
+  itif(hasToken)("create: sets restart_policy_max_retries", async () => {
+    const s = await apply(
+      yaml(name, "    restart_policy:\n      type: on_failure\n      max_retries: 5"),
+    );
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.deploy?.restartPolicyMaxRetries).toBe(5);
+  });
+
+  itif(hasToken)("converge after create", async () => {
+    expect(
+      await converges(
+        yaml(name, "    restart_policy:\n      type: on_failure\n      max_retries: 5"),
+      ),
+    ).toEqual([]);
+  });
+
+  itif(hasToken)("update: changes restart_policy_max_retries", async () => {
+    const s = await apply(
+      yaml(name, "    restart_policy:\n      type: on_failure\n      max_retries: 3"),
+    );
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.deploy?.restartPolicyMaxRetries).toBe(3);
+  });
+
+  itif(hasToken)("converge after update", async () => {
+    expect(
+      await converges(
+        yaml(name, "    restart_policy:\n      type: on_failure\n      max_retries: 3"),
+      ),
+    ).toEqual([]);
+  });
+
+  itif(hasToken)("remove: clears restart_policy_max_retries", async () => {
+    const s = await apply(yaml(name, ""));
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.deploy?.restartPolicyMaxRetries).toBeFalsy();
+  });
+
+  itif(hasToken)("converge after remove", async () => {
+    expect(await converges(yaml(name, ""))).toEqual([]);
+  });
+});
