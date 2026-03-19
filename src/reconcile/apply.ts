@@ -291,7 +291,7 @@ export async function applyConfigDiff(
       }
     }
     // "volume" remove entries: handled post-commit via volumeDelete (step 4.8)
-    // TCP proxy removal/update: handled post-commit via Step 4.4
+    // TCP proxy removal: handled pre-stage via Step 2.6
     // "setting" category: already nulled by config builder — no injection needed
     // "service" category: handled by step 5 (deleteService)
   }
