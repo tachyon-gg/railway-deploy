@@ -207,18 +207,19 @@ export async function fetchTcpProxies(
 }
 
 /**
- * Fetch the TCP proxy for a service (with ID for deletion).
- * Returns null if no proxy exists.
+ * Fetch the TCP proxy for a specific port on a service.
+ * Returns null if no proxy exists for that port.
  */
-export async function fetchTcpProxy(
+export async function fetchTcpProxyByPort(
   client: GraphQLClient,
   serviceId: string,
   environmentId: string,
+  port: number,
 ): Promise<TcpProxyInfo | null> {
   try {
     const data = await client.request(GetTcpProxiesDocument, { serviceId, environmentId });
-    const first = data.tcpProxies[0];
-    return first ? { id: first.id, applicationPort: first.applicationPort } : null;
+    const match = data.tcpProxies.find((p) => p.applicationPort === port);
+    return match ? { id: match.id, applicationPort: match.applicationPort } : null;
   } catch {
     return null;
   }

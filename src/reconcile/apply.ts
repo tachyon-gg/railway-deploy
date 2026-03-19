@@ -36,7 +36,7 @@ import type { DomainInfo } from "../railway/queries.js";
 import {
   fetchEnvironmentConfig,
   fetchPrivateNetworkEndpoint,
-  fetchTcpProxy,
+  fetchTcpProxyByPort,
 } from "../railway/queries.js";
 import type { ConfigDiff } from "../types/changeset.js";
 import type { EnvironmentConfig } from "../types/envconfig.js";
@@ -296,6 +296,39 @@ export async function applyConfigDiff(
     // "service" category: handled by step 5 (deleteService)
   }
 
+  // Step 2.6: Delete old TCP proxy before staging.
+  // Railway only supports one TCP proxy per service. Patches can create but not remove.
+  // We must delete the old proxy before staging so the patch can create the new one.
+  // For --stage mode, skip (deletion is a real mutation — noted in the stage message).
+  if (!options?.stageOnly) {
+    for (const entry of diff.entries) {
+      if (
+        entry.category === "setting" &&
+        entry.path.startsWith("networking.tcpProxies.") &&
+        entry.action === "remove" &&
+        entry.serviceName &&
+        serviceNameToId
+      ) {
+        const svcId = serviceNameToId.get(entry.serviceName);
+        const oldPort = Number(entry.path.slice("networking.tcpProxies.".length));
+        if (svcId && !Number.isNaN(oldPort)) {
+          try {
+            const proxy = await fetchTcpProxyByPort(client, svcId, environmentId, oldPort);
+            if (proxy) {
+              await deleteTcpProxy(client, proxy.id);
+              logger.success(`Deleted TCP proxy ${oldPort} for ${entry.serviceName}`);
+            }
+          } catch (err) {
+            result.errors.push({
+              step: `tcp-proxy-delete:${entry.serviceName}`,
+              error: extractErrorMessage(err),
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Step 3: Stage changes
   if (diff.entries.length > 0 || Object.keys(desiredConfig.services).length > 0) {
     try {
@@ -343,12 +376,10 @@ export async function applyConfigDiff(
       }
       if (
         diff.entries.some(
-          (e) =>
-            e.path.startsWith("networking.tcpProxies.") &&
-            (e.action === "remove" || e.action === "update"),
+          (e) => e.path.startsWith("networking.tcpProxies.") && e.action === "remove",
         )
       ) {
-        postCommitNotes.push("TCP proxy removal/update");
+        postCommitNotes.push("TCP proxy removal");
       }
       const note =
         postCommitNotes.length > 0 ? ` Note: ${postCommitNotes.join(", ")} require --apply.` : "";
@@ -374,36 +405,8 @@ export async function applyConfigDiff(
     }
   }
 
-  // Step 4.4: Delete TCP proxies (must happen after commit, not in --stage mode)
-  // Patches can create proxies but can't remove them (null injection is ignored).
-  // For updates (port change), delete old proxy so the committed patch can create the new one.
-  if (result.committed) {
-    for (const entry of diff.entries) {
-      if (
-        entry.category === "setting" &&
-        entry.path.startsWith("networking.tcpProxies.") &&
-        (entry.action === "remove" || entry.action === "update") &&
-        entry.serviceName &&
-        serviceNameToId
-      ) {
-        const svcId = serviceNameToId.get(entry.serviceName);
-        if (svcId) {
-          try {
-            const proxy = await fetchTcpProxy(client, svcId, environmentId);
-            if (proxy) {
-              await deleteTcpProxy(client, proxy.id);
-              logger.success(`Deleted TCP proxy ${proxy.applicationPort} for ${entry.serviceName}`);
-            }
-          } catch (err) {
-            result.errors.push({
-              step: `tcp-proxy-delete:${entry.serviceName}`,
-              error: extractErrorMessage(err),
-            });
-          }
-        }
-      }
-    }
-  }
+  // TCP proxy deletion is handled pre-stage in Step 2.6 (must happen before patch
+  // so the patch can create the new proxy on port changes).
 
   // Step 4.5: Handle static outbound IPs (egress gateways — separate from patch system)
   for (const entry of diff.entries) {
