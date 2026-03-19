@@ -189,6 +189,11 @@ function formatEntryLabel(entry: ConfigDiffEntry, verbose: boolean): string {
     case "service":
       return `service: ${entry.action === "add" ? `create (${entry.newValue})` : "delete"}`;
 
+    case "private-hostname": {
+      if (entry.action === "remove") return "private hostname: remove";
+      return `private hostname: ${entry.newValue}`;
+    }
+
     default:
       return `${entry.path}: ${entry.action}`;
   }

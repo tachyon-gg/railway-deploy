@@ -23,6 +23,47 @@ mutation VolumeUpdate($volumeId: String!, $input: VolumeUpdateInput!) {
   }
 }
 
+mutation BucketCreate($input: BucketCreateInput!) {
+  bucketCreate(input: $input) {
+    id
+    name
+  }
+}
+
+mutation VolumeDelete($volumeId: String!) {
+  volumeDelete(volumeId: $volumeId)
+}
+
+mutation CustomDomainCreate($input: CustomDomainCreateInput!) {
+  customDomainCreate(input: $input) {
+    id
+    domain
+  }
+}
+
+mutation CustomDomainDelete($id: String!) {
+  customDomainDelete(id: $id)
+}
+
+mutation CustomDomainUpdate($id: String!, $environmentId: String!, $targetPort: Int) {
+  customDomainUpdate(id: $id, environmentId: $environmentId, targetPort: $targetPort)
+}
+
+mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
+  serviceDomainCreate(input: $input) {
+    id
+    domain
+  }
+}
+
+mutation ServiceDomainDelete($id: String!) {
+  serviceDomainDelete(id: $id)
+}
+
+mutation ServiceDomainUpdate($input: ServiceDomainUpdateInput!) {
+  serviceDomainUpdate(input: $input)
+}
+
 mutation EnvironmentDelete($id: String!) {
   environmentDelete(id: $id)
 }
@@ -54,6 +95,18 @@ mutation EnvironmentStageChanges(
     id
     status
   }
+}
+
+mutation PrivateNetworkEndpointDelete($id: String!) {
+  privateNetworkEndpointDelete(id: $id)
+}
+
+mutation PrivateNetworkEndpointRename($id: String!, $dnsName: String!, $privateNetworkId: String!) {
+  privateNetworkEndpointRename(id: $id, dnsName: $dnsName, privateNetworkId: $privateNetworkId)
+}
+
+mutation TcpProxyDelete($id: String!) {
+  tcpProxyDelete(id: $id)
 }
 
 mutation EnvironmentPatchCommitStaged(

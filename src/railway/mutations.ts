@@ -1,15 +1,26 @@
 import type { GraphQLClient } from "graphql-request";
 import type { ServiceCreateInput } from "../generated/graphql.js";
 import {
+  BucketCreateDocument,
+  CustomDomainCreateDocument,
+  CustomDomainDeleteDocument,
+  CustomDomainUpdateDocument,
   EgressGatewayAssociationCreateDocument,
   EgressGatewayAssociationsClearDocument,
   EnvironmentCreateDocument,
   EnvironmentDeleteDocument,
   EnvironmentPatchCommitStagedDocument,
   EnvironmentStageChangesDocument,
+  PrivateNetworkEndpointDeleteDocument,
+  PrivateNetworkEndpointRenameDocument,
   ServiceCreateDocument,
   ServiceDeleteDocument,
+  ServiceDomainCreateDocument,
+  ServiceDomainDeleteDocument,
+  ServiceDomainUpdateDocument,
+  TcpProxyDeleteDocument,
   VolumeCreateDocument,
+  VolumeDeleteDocument,
   VolumeUpdateDocument,
 } from "../generated/graphql.js";
 import type { EnvironmentConfig } from "../types/envconfig.js";
@@ -64,6 +75,17 @@ export async function updateVolume(client: GraphQLClient, volumeId: string, name
   await client.request(VolumeUpdateDocument, { volumeId, input: { name } });
 }
 
+export async function createBucket(client: GraphQLClient, projectId: string, name: string) {
+  const data = await client.request(BucketCreateDocument, {
+    input: { projectId, name },
+  });
+  return data.bucketCreate;
+}
+
+export async function deleteVolume(client: GraphQLClient, volumeId: string) {
+  await client.request(VolumeDeleteDocument, { volumeId });
+}
+
 export async function createEgressGateway(
   client: GraphQLClient,
   serviceId: string,
@@ -85,6 +107,93 @@ export async function clearEgressGateways(
   });
 }
 
+export async function createCustomDomain(
+  client: GraphQLClient,
+  projectId: string,
+  serviceId: string,
+  environmentId: string,
+  domain: string,
+  targetPort?: number,
+) {
+  const data = await client.request(CustomDomainCreateDocument, {
+    input: {
+      projectId,
+      serviceId,
+      environmentId,
+      domain,
+      ...(targetPort !== undefined ? { targetPort } : {}),
+    },
+  });
+  return data.customDomainCreate;
+}
+
+export async function deleteCustomDomain(client: GraphQLClient, domainId: string) {
+  await client.request(CustomDomainDeleteDocument, { id: domainId });
+}
+
+export async function updateCustomDomain(
+  client: GraphQLClient,
+  domainId: string,
+  environmentId: string,
+  targetPort?: number,
+) {
+  await client.request(CustomDomainUpdateDocument, {
+    id: domainId,
+    environmentId,
+    ...(targetPort !== undefined ? { targetPort } : {}),
+  });
+}
+
+export async function createServiceDomain(
+  client: GraphQLClient,
+  serviceId: string,
+  environmentId: string,
+  targetPort?: number,
+) {
+  const data = await client.request(ServiceDomainCreateDocument, {
+    input: {
+      serviceId,
+      environmentId,
+      ...(targetPort !== undefined ? { targetPort } : {}),
+    },
+  });
+  return data.serviceDomainCreate;
+}
+
+export async function deleteServiceDomain(client: GraphQLClient, domainId: string) {
+  await client.request(ServiceDomainDeleteDocument, { id: domainId });
+}
+
+export async function updateServiceDomain(
+  client: GraphQLClient,
+  input: {
+    serviceDomainId: string;
+    serviceId: string;
+    environmentId: string;
+    domain: string;
+    targetPort?: number;
+  },
+) {
+  await client.request(ServiceDomainUpdateDocument, { input });
+}
+
+export async function renamePrivateNetworkEndpoint(
+  client: GraphQLClient,
+  endpointId: string,
+  dnsName: string,
+  privateNetworkId: string,
+) {
+  await client.request(PrivateNetworkEndpointRenameDocument, {
+    id: endpointId,
+    dnsName,
+    privateNetworkId,
+  });
+}
+
+export async function deletePrivateNetworkEndpoint(client: GraphQLClient, endpointId: string) {
+  await client.request(PrivateNetworkEndpointDeleteDocument, { id: endpointId });
+}
+
 export async function deleteEnvironment(client: GraphQLClient, environmentId: string) {
   await client.request(EnvironmentDeleteDocument, { id: environmentId });
 }
@@ -94,6 +203,10 @@ export async function createEnvironment(client: GraphQLClient, projectId: string
     input: { projectId, name },
   });
   return data.environmentCreate;
+}
+
+export async function deleteTcpProxy(client: GraphQLClient, proxyId: string) {
+  await client.request(TcpProxyDeleteDocument, { id: proxyId });
 }
 
 /**

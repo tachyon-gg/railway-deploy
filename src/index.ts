@@ -16,6 +16,7 @@ import { createClient } from "./railway/client.js";
 import {
   fetchEnvironmentConfig,
   fetchServiceMap,
+  fetchTcpProxies,
   hasEgressGateways,
   resolveEnvironmentId,
   resolveProjectId,
@@ -188,14 +189,16 @@ async function run(configPath: string, opts: CliOptions) {
     }
   }
 
-  // Fetch egress gateway status for services that configure static_outbound_ips
+  // Fetch egress gateway status for existing services.
+  // We check all existing services (not just those that configure static_outbound_ips)
+  // so we can detect and clear egress when the field is removed from config.
   const egressByService = new Map<string, boolean>();
-  const servicesWithEgress = Object.entries(desiredState.services).filter(
-    ([, svc]) => svc.staticOutboundIps !== undefined,
+  const existingServices = Object.entries(desiredState.services).filter(([name]) =>
+    serviceMap.serviceNameToId.has(name),
   );
-  if (servicesWithEgress.length > 0) {
+  if (existingServices.length > 0) {
     const egressResults = await Promise.allSettled(
-      servicesWithEgress.map(async ([name]) => {
+      existingServices.map(async ([name]) => {
         const svcId = serviceMap.serviceNameToId.get(name);
         if (!svcId) return { name, hasEgress: false };
         return { name, hasEgress: await hasEgressGateways(client, svcId, environmentId) };
@@ -204,6 +207,35 @@ async function run(configPath: string, opts: CliOptions) {
     for (const result of egressResults) {
       if (result.status === "fulfilled") {
         egressByService.set(result.value.name, result.value.hasEgress);
+      }
+    }
+  }
+
+  // Fetch TCP proxies for existing services and inject into currentConfig.
+  // Railway's EnvironmentConfig response does not include TCP proxy data,
+  // so we query it separately and merge it in for accurate diffing.
+  if (existingServices.length > 0) {
+    const tcpResults = await Promise.allSettled(
+      existingServices.map(async ([name]) => {
+        const svcId = serviceMap.serviceNameToId.get(name);
+        if (!svcId) return { svcId: "", ports: [] as number[] };
+        return { svcId, ports: await fetchTcpProxies(client, svcId, environmentId) };
+      }),
+    );
+    for (const result of tcpResults) {
+      if (result.status === "fulfilled" && result.value.ports.length > 0) {
+        const { svcId, ports } = result.value;
+        if (!currentConfig.services) currentConfig.services = {};
+        if (!currentConfig.services[svcId]) currentConfig.services[svcId] = {};
+        if (!currentConfig.services[svcId].networking)
+          currentConfig.services[svcId].networking = {};
+        const networking = currentConfig.services[svcId].networking;
+        if (networking) {
+          networking.tcpProxies = {};
+          for (const port of ports) {
+            networking.tcpProxies[String(port)] = {};
+          }
+        }
       }
     }
   }
@@ -222,6 +254,8 @@ async function run(configPath: string, opts: CliOptions) {
     deletedSharedVars,
     deletedVars,
     egressByService,
+    customDomainsByService: serviceMap.customDomainsByService,
+    serviceDomainByService: serviceMap.serviceDomainByService,
   };
 
   let diff = computeConfigDiff(desiredConfig, currentConfig, diffCtx);
@@ -293,6 +327,9 @@ async function run(configPath: string, opts: CliOptions) {
       desiredState,
       serviceMap.serviceNameToId,
       { stageOnly: opts.stage },
+      serviceMap.serviceDomainByService,
+      serviceMap.customDomainsByService,
+      serviceMap.volumeIdByService,
     );
     printApplyResult(result);
 

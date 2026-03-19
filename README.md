@@ -148,10 +148,14 @@ services:
       PORT: "3000"
     environments:
       staging:
-        branch: develop
+        source:
+          repo: myorg/web-app
+          branch: develop
       production:
-        branch: main
-        wait_for_ci: true
+        source:
+          repo: myorg/web-app
+          branch: main
+          wait_for_ci: true
 
   # Service without environments block — exists in all environments
   redis:
@@ -178,8 +182,8 @@ When a service has per-environment overrides:
 | Field type | Merge behavior |
 |------------|---------------|
 | `params`, `variables` | Shallow merge (override keys replace defaults) |
-| `domains`, `source`, `volume`, `region`, `healthcheck` | Override replaces entirely |
-| Scalar fields (`start_command`, `builder`, etc.) | Override replaces |
+| `domains`, `source`, `volume`, `regions`, `healthcheck`, `build` | Override replaces entirely |
+| Scalar fields (`start_command`, etc.) | Override replaces |
 
 ---
 
@@ -194,35 +198,31 @@ source:
   image: nginx:latest            # Docker image (Docker Hub, GHCR, etc.)
   # OR
   repo: myorg/my-repo            # GitHub repository
-
-branch: main                     # Branch to deploy from (GitHub repos)
-wait_for_ci: true                # Wait for GitHub Actions to pass before deploying
-
-registry_credentials:            # For private container registries
-  username: ${REGISTRY_USER}
-  password: ${REGISTRY_PASS}
-
-auto_updates:                    # Auto-update schedule for image-based services
-  type: patch
-  schedule:
-    - day: 0                     # Sunday
+  branch: main                   # Branch to deploy from (GitHub repos)
+  root_directory: /packages/api  # Root directory (monorepo support)
+  wait_for_ci: true              # Wait for GitHub Actions to pass before deploying
+  registry_credentials:          # For private container registries
+    username: ${REGISTRY_USER}
+    password: ${REGISTRY_PASS}
+  auto_updates:                  # Auto-update schedule for image-based services
+    monday:
       start_hour: 0
-      end_hour: 24
-    - day: 1                     # Monday
+      end_hour: 6
+    friday:
       start_hour: 0
-      end_hour: 24
+      end_hour: 6
 ```
 
 #### Build
 
 ```yaml
-builder: NIXPACKS               # RAILPACK (default), NIXPACKS, HEROKU, PAKETO, DOCKERFILE
-build_command: npm run build     # Custom build command
-dockerfile_path: Dockerfile.prod # Path to Dockerfile
-root_directory: /packages/api    # Root directory (monorepo support)
-watch_patterns:                  # File patterns that trigger deploys
-  - /packages/api/src/**
-  - /packages/shared/**
+build:
+  builder: NIXPACKS             # RAILPACK (default), NIXPACKS, DOCKERFILE
+  command: npm run build         # Custom build command
+  dockerfile_path: Dockerfile.prod # Path to Dockerfile
+  watch_patterns:                # File patterns that trigger deploys
+    - /packages/api/src/**
+    - /packages/shared/**
 railway_config_file: railway.toml # Path to railway.json/toml
 metal: true                      # Enable Metal build environment (faster builds)
 ```
@@ -266,12 +266,11 @@ domains:
     target_port: 8080
 
 # Railway-provided domain (*.up.railway.app)
-railway_domain: true             # Generate a railway domain
-railway_domain:                  # ...with a specific target port
+railway_domain:
   target_port: 3000
 
-# TCP proxies (for non-HTTP services like databases)
-tcp_proxies: [5432, 6379]
+# TCP proxy (for non-HTTP services like databases)
+tcp_proxy: 5432
 
 # Private networking
 private_hostname: postgres       # Internal DNS hostname for service-to-service communication
@@ -284,9 +283,11 @@ static_outbound_ips: true        # Assign permanent outbound IP addresses
 #### Scaling
 
 ```yaml
-region:                          # Deployment region
-  region: us-east4
-  num_replicas: 3                # Horizontal replicas (default: 1)
+regions: us-east4                # Single region (1 replica)
+# or
+regions:                         # Multi-region with replica counts
+  us-east4: 3
+  us-west1: 1
 
 limits:                          # Resource limits per replica
   memory_gb: 8
@@ -356,9 +357,7 @@ healthcheck:
   path: /health
   timeout: 300
 
-region:
-  region: us-east4
-  num_replicas: 1
+regions: us-east4
 ```
 
 Referenced from a project config:
@@ -417,11 +416,12 @@ services:
   web:
     source:
       repo: myorg/web-app
-    builder: NIXPACKS
+      root_directory: /packages/web
+    build:
+      builder: NIXPACKS
+      command: npm run build
     metal: true
-    build_command: npm run build
     start_command: npm start
-    root_directory: /packages/web
     pre_deploy_command: npm run migrate
     healthcheck:
       path: /health
@@ -430,25 +430,29 @@ services:
       type: ON_FAILURE
       max_retries: 5
     serverless: true
-    railway_domain: true
+    railway_domain:
+      target_port: 3000
     variables:
       PORT: "3000"
       DATABASE_URL: ${{Postgres.DATABASE_URL}}
     environments:
       staging:
-        branch: develop
+        source:
+          repo: myorg/web-app
+          branch: develop
         domains:
           - staging.example.com
       production:
-        branch: main
-        wait_for_ci: true
+        source:
+          repo: myorg/web-app
+          branch: main
+          wait_for_ci: true
         domains:
           - app.example.com
           - domain: api.example.com
             target_port: 8080
-        region:
-          region: us-east4
-          num_replicas: 2
+        regions:
+          us-east4: 2
         limits:
           memory_gb: 4
           vcpus: 2
@@ -460,7 +464,7 @@ services:
     volume:
       name: pg-data
       mount: /var/lib/postgresql/data
-    tcp_proxies: [5432]
+    tcp_proxy: 5432
     variables:
       POSTGRES_DB: myapp
 
@@ -471,7 +475,7 @@ services:
     volume:
       name: redis-data
       mount: /data
-    tcp_proxies: [6379]
+    tcp_proxy: 6379
 
   worker:
     template: services/worker.yaml
@@ -482,17 +486,21 @@ services:
   cron:
     source:
       repo: myorg/web-app
-    root_directory: /packages/cron
+      root_directory: /packages/cron
     cron_schedule: "0 0 * * *"
     start_command: node scripts/cleanup.js
 ```
 
 ## Known limitations
 
+- **Region management.** Setting `regions` deploys to those regions. Railway always maintains at least one region — the last region cannot be removed. Changing regions is supported (old regions are removed and new ones added). Multi-region is supported via a map of region to replica count.
 - **Service groups** are read-only. Railway's public API does not expose group creation -- groups can only be managed via the Railway dashboard. Existing groups are respected when reading config.
 - **Custom domains** may require DNS verification to take effect.
-- **Registry credentials** are always sent when configured but cannot be verified -- Railway does not return them in config responses.
+- **Registry credentials** are write-only. Railway never returns credentials in config responses, so removal of registry credentials from your config is not detectable -- we simply stop sending them.
 - **Static outbound IPs** are managed via a separate API call (not atomic with the config patch). If the patch succeeds but the egress call fails, IPs may not be configured.
+- **Volume size/region** can only be set or increased, not cleared or reduced. Railway does not support shrinking volumes.
+- **Volume mount removal** is supported via the `volumeDelete` mutation and requires the `--allow-data-loss` flag, since it permanently deletes the volume and its data.
+- **Bucket deletion** is not supported by Railway's API. Buckets that are removed from config will be left in place with a warning.
 
 ## JSON schemas
 

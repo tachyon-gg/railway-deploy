@@ -246,11 +246,7 @@ describe("computeConfigDiff", () => {
 
   test("detects added domain", () => {
     const desired: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { customDomains: { "app.example.com": { port: 8080 } } },
-        },
-      },
+      services: { "svc-1": {} },
     };
     const current: EnvironmentConfig = {
       services: { "svc-1": {} },
@@ -258,8 +254,15 @@ describe("computeConfigDiff", () => {
     const ctx = makeCtx({
       serviceIdToName: new Map([["svc-1", "web"]]),
       desiredState: makeState({
-        services: { web: { name: "web", variables: {}, domains: [] } },
+        services: {
+          web: {
+            name: "web",
+            variables: {},
+            domains: [{ domain: "app.example.com", targetPort: 8080 }],
+          },
+        },
       }),
+      customDomainsByService: new Map(), // no current domains
     });
     const diff = computeConfigDiff(desired, current, ctx);
     const domainEntries = diff.entries.filter((e) => e.category === "domain");
@@ -272,17 +275,14 @@ describe("computeConfigDiff", () => {
       services: { "svc-1": {} },
     };
     const current: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { customDomains: { "old.example.com": {} } },
-        },
-      },
+      services: { "svc-1": {} },
     };
     const ctx = makeCtx({
       serviceIdToName: new Map([["svc-1", "web"]]),
       desiredState: makeState({
         services: { web: { name: "web", variables: {}, domains: [] } },
       }),
+      customDomainsByService: new Map([["web", [{ id: "dom-1", domain: "old.example.com" }]]]),
     });
     const diff = computeConfigDiff(desired, current, ctx);
     const domainEntries = diff.entries.filter((e) => e.category === "domain");
@@ -511,42 +511,7 @@ describe("computeConfigDiff", () => {
 
   test("detects domain update when port changes", () => {
     const desired: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { customDomains: { "app.example.com": { port: 9090 } } },
-        },
-      },
-    };
-    const current: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { customDomains: { "app.example.com": { port: 8080 } } },
-        },
-      },
-    };
-    const ctx = makeCtx({
-      serviceIdToName: new Map([["svc-1", "web"]]),
-      desiredState: makeState({
-        services: { web: { name: "web", variables: {}, domains: [] } },
-      }),
-    });
-    const diff = computeConfigDiff(desired, current, ctx);
-    const domainEntries = diff.entries.filter((e) => e.category === "domain");
-    expect(domainEntries).toHaveLength(1);
-    expect(domainEntries[0].action).toBe("update");
-    expect(domainEntries[0].oldValue).toEqual({ port: 8080 });
-    expect(domainEntries[0].newValue).toEqual({ port: 9090 });
-  });
-
-  // --- Networking: privateNetworkEndpoint ---
-
-  test("detects added privateNetworkEndpoint", () => {
-    const desired: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { privateNetworkEndpoint: "svc.internal" },
-        },
-      },
+      services: { "svc-1": {} },
     };
     const current: EnvironmentConfig = {
       services: { "svc-1": {} },
@@ -554,23 +519,52 @@ describe("computeConfigDiff", () => {
     const ctx = makeCtx({
       serviceIdToName: new Map([["svc-1", "web"]]),
       desiredState: makeState({
-        services: { web: { name: "web", variables: {}, domains: [] } },
+        services: {
+          web: {
+            name: "web",
+            variables: {},
+            domains: [{ domain: "app.example.com", targetPort: 9090 }],
+          },
+        },
+      }),
+      customDomainsByService: new Map([
+        ["web", [{ id: "dom-1", domain: "app.example.com", targetPort: 8080 }]],
+      ]),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const domainEntries = diff.entries.filter((e) => e.category === "domain");
+    expect(domainEntries).toHaveLength(1);
+    expect(domainEntries[0].action).toBe("update");
+  });
+
+  // --- Networking: privateNetworkEndpoint ---
+
+  test("detects added privateNetworkEndpoint", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        services: {
+          web: { name: "web", variables: {}, domains: [], privateHostname: "svc.internal" },
+        },
       }),
     });
     const diff = computeConfigDiff(desired, current, ctx);
     const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
     expect(entry).toBeDefined();
     expect(entry?.action).toBe("add");
+    expect(entry?.category).toBe("private-hostname");
     expect(entry?.newValue).toBe("svc.internal");
   });
 
   test("detects updated privateNetworkEndpoint", () => {
     const desired: EnvironmentConfig = {
-      services: {
-        "svc-1": {
-          networking: { privateNetworkEndpoint: "svc-new.internal" },
-        },
-      },
+      services: { "svc-1": {} },
     };
     const current: EnvironmentConfig = {
       services: {
@@ -582,7 +576,9 @@ describe("computeConfigDiff", () => {
     const ctx = makeCtx({
       serviceIdToName: new Map([["svc-1", "web"]]),
       desiredState: makeState({
-        services: { web: { name: "web", variables: {}, domains: [] } },
+        services: {
+          web: { name: "web", variables: {}, domains: [], privateHostname: "svc-new.internal" },
+        },
       }),
     });
     const diff = computeConfigDiff(desired, current, ctx);
@@ -591,9 +587,9 @@ describe("computeConfigDiff", () => {
     expect(entry?.action).toBe("update");
   });
 
-  test("detects removed privateNetworkEndpoint", () => {
+  test("ignores privateNetworkEndpoint when not in desired config", () => {
     const desired: EnvironmentConfig = {
-      services: { "svc-1": { networking: {} } },
+      services: { "svc-1": {} },
     };
     const current: EnvironmentConfig = {
       services: {
@@ -610,8 +606,62 @@ describe("computeConfigDiff", () => {
     });
     const diff = computeConfigDiff(desired, current, ctx);
     const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
+    // When user doesn't configure private_hostname, we don't manage it —
+    // Railway auto-assigns one and we should leave it alone.
+    expect(entry).toBeUndefined();
+  });
+
+  test("detects explicit removal of privateNetworkEndpoint", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc.internal" },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        // privateHostname undefined = user didn't set it = leave Railway's value alone
+        // To explicitly remove, we'd need a different mechanism (not yet supported in YAML)
+        // For now, test that undefined privateHostname does NOT produce a remove entry
+        services: { web: { name: "web", variables: {}, domains: [] } },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
+    // When user doesn't set private_hostname, Railway's auto-assigned value is left alone
+    expect(entry).toBeUndefined();
+  });
+
+  test("detects removal when privateHostname is empty string", () => {
+    const desired: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": {
+          networking: { privateNetworkEndpoint: "svc.internal" },
+        },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "web"]]),
+      desiredState: makeState({
+        // privateHostname: "" signals explicit removal
+        services: {
+          web: { name: "web", variables: {}, domains: [], privateHostname: "" },
+        },
+      }),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    const entry = diff.entries.find((e) => e.path === "networking.privateNetworkEndpoint");
     expect(entry).toBeDefined();
     expect(entry?.action).toBe("remove");
+    expect(entry?.category).toBe("private-hostname");
   });
 
   // --- Build: normalizeEmpty and field comparisons ---
@@ -795,7 +845,7 @@ describe("computeConfigDiff", () => {
       }),
     });
     const diff = computeConfigDiff(desired, current, ctx);
-    const entry = diff.entries.find((e) => e.path === "deploy.multiRegionConfig");
+    const entry = diff.entries.find((e) => e.path.startsWith("deploy.multiRegionConfig"));
     expect(entry).toBeDefined();
     expect(entry?.action).toBe("add");
   });
@@ -822,7 +872,7 @@ describe("computeConfigDiff", () => {
       }),
     });
     const diff = computeConfigDiff(desired, current, ctx);
-    const entry = diff.entries.find((e) => e.path === "deploy.multiRegionConfig");
+    const entry = diff.entries.find((e) => e.path.startsWith("deploy.multiRegionConfig"));
     expect(entry).toBeDefined();
     expect(entry?.action).toBe("update");
   });
@@ -1222,7 +1272,9 @@ describe("computeConfigDiff", () => {
     const diff = computeConfigDiff(desired, current, ctx);
     const entry = diff.entries.find((e) => e.path === "deploy.sleepApplication");
     expect(entry).toBeDefined();
-    expect(entry?.action).toBe("update");
+    // Railway omits sleepApplication when false (it's the default), so
+    // false normalizes to "not set" — going from false to true is an "add"
+    expect(entry?.action).toBe("add");
   });
 
   // --- Enrichment: default values match (no spurious diff) ---

@@ -129,21 +129,18 @@ export function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvCon
 
   // --- Networking ---
   const networking: EnvConfigNetworking = {};
-  // Custom domains — always include (empty = no domains)
-  networking.customDomains = {};
-  for (const d of svc.domains) {
-    networking.customDomains[d.domain] = d.targetPort !== undefined ? { port: d.targetPort } : {};
-  }
-  networking.privateNetworkEndpoint = svc.privateHostname ?? null;
-  networking.serviceDomains = svc.railwayDomain
-    ? { _: { port: svc.railwayDomain.targetPort } }
-    : null;
-  // TCP proxies — always include (empty = no proxies)
+  // Custom domains are handled via separate mutations in apply.ts
+  // (EnvironmentConfig patches silently ignore custom domain creation)
+  // privateNetworkEndpoint is handled via dedicated mutations in apply.ts
+  // (PrivateNetworkEndpointRename for create/update, PrivateNetworkEndpointDelete for removal).
+  // Not included in the EnvironmentConfig patch to avoid conflicts with Railway's
+  // auto-assigned hostnames and the patch system's behavior.
+  // serviceDomains (railway domains): handled via separate mutations in apply.ts
+  // (create/update/delete don't work via EnvironmentConfig patches)
+  // TCP proxy — always include (empty = no proxy)
   networking.tcpProxies = {};
-  if (svc.tcpProxies && svc.tcpProxies.length > 0) {
-    for (const port of svc.tcpProxies) {
-      networking.tcpProxies[String(port)] = {};
-    }
+  if (svc.tcpProxy) {
+    networking.tcpProxies[String(svc.tcpProxy)] = {};
   }
   service.networking = networking;
 
@@ -154,8 +151,9 @@ export function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvCon
     builder: svc.builder ?? undefined, // default-backed: RAILPACK
     dockerfilePath: svc.dockerfilePath ?? null,
     buildCommand: svc.buildCommand ?? null,
-    watchPatterns: svc.watchPatterns ?? null,
-    buildEnvironment: svc.metal ? "V3" : null,
+    watchPatterns: svc.watchPatterns ?? [], // Railway ignores null; empty array clears
+    // buildEnvironment: non-clearable — Railway ignores null. Only include when user sets metal.
+    ...(svc.metal ? { buildEnvironment: "V3" } : {}),
   };
 
   // --- Deploy ---
@@ -163,20 +161,27 @@ export function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvCon
   // Default-backed fields: omit when unset (Railway keeps its default)
   service.deploy = {
     startCommand: svc.startCommand ?? null,
-    restartPolicyType: svc.restartPolicy ?? undefined, // default-backed: ON_FAILURE
+    // Cron services: Railway forces restartPolicyType to NEVER — match to avoid perpetual diff
+    restartPolicyType: svc.cronSchedule ? "NEVER" : (svc.restartPolicy ?? "ON_FAILURE"),
     restartPolicyMaxRetries: svc.restartPolicyMaxRetries ?? null,
     cronSchedule: svc.cronSchedule ?? null,
     healthcheckPath: svc.healthcheck?.path ?? null,
     healthcheckTimeout: svc.healthcheck?.timeout ?? null,
     sleepApplication: svc.serverless ?? null,
-    drainingSeconds: svc.drainingSeconds ?? null,
-    overlapSeconds: svc.overlapSeconds ?? null,
-    ipv6EgressEnabled: svc.ipv6EgressEnabled ?? undefined, // default-backed: false
+    drainingSeconds: svc.drainingSeconds ?? 0, // non-clearable: Railway ignores null; send explicit default
+    overlapSeconds: svc.overlapSeconds ?? 0, // non-clearable: Railway ignores null; send explicit default
+    ipv6EgressEnabled: svc.ipv6EgressEnabled ?? false, // non-clearable: must send explicit default
     preDeployCommand: svc.preDeployCommand ?? null,
-    // multiRegionConfig: default-backed (project-specific region) — omit when unset
-    ...(svc.region
-      ? { multiRegionConfig: { [svc.region.region]: { numReplicas: svc.region.numReplicas } } }
+    // multiRegionConfig: send desired regions; removal of old regions handled in apply step 2.5
+    ...(svc.regions
+      ? {
+          multiRegionConfig: Object.fromEntries(
+            Object.entries(svc.regions).map(([region, numReplicas]) => [region, { numReplicas }]),
+          ),
+        }
       : {}),
+    // limitOverride: { containers: null } clears limits in Railway.
+    // Always include — either with values (user set limits) or { containers: null } (clear).
     limitOverride: svc.limits
       ? {
           containers: {
@@ -186,7 +191,7 @@ export function buildServiceConfig(svc: ServiceState, volumeId?: string): EnvCon
             ...(svc.limits.vCPUs !== undefined ? { cpu: svc.limits.vCPUs } : {}),
           },
         }
-      : null,
+      : { containers: null },
     ...(svc.registryCredentials ? { registryCredentials: svc.registryCredentials } : {}),
     // runtime and useLegacyStacker are Railway-internal — never send
   };

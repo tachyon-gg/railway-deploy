@@ -45,6 +45,10 @@ export interface DiffContext {
   deletedVars: Record<string, string[]>;
   /** Current egress gateway status per service name (true = has static IPs) */
   egressByService?: Map<string, boolean>;
+  /** Current custom domains per service name */
+  customDomainsByService?: Map<string, Array<{ id: string; domain: string; targetPort?: number }>>;
+  /** Current railway domain (service domain) per service name */
+  serviceDomainByService?: Map<string, { id: string; domain: string; targetPort?: number }>;
 }
 
 /**
@@ -175,6 +179,127 @@ export function computeConfigDiff(
           category: "setting",
           oldValue: true,
         });
+      }
+    }
+  }
+
+  // --- Private network endpoints ---
+  // Not part of EnvironmentConfig patches — handled via dedicated mutations
+  // (PrivateNetworkEndpointRename for create/update, PrivateNetworkEndpointDelete for removal).
+  // Only diff when user explicitly configures private_hostname.
+  // When user doesn't set private_hostname, Railway's auto-assigned value is left alone.
+  for (const [name, svc] of Object.entries(ctx.desiredState.services)) {
+    const serviceId = [...ctx.serviceIdToName.entries()].find(([, n]) => n === name)?.[0];
+    const currentEndpoint = serviceId
+      ? current.services?.[serviceId]?.networking?.privateNetworkEndpoint || undefined
+      : undefined;
+
+    if (svc.privateHostname !== undefined) {
+      // User explicitly set private_hostname
+      const desiredHostname = svc.privateHostname || undefined;
+      if (desiredHostname !== currentEndpoint) {
+        entries.push({
+          path: "networking.privateNetworkEndpoint",
+          action: desiredHostname ? (currentEndpoint ? "update" : "add") : "remove",
+          serviceName: name,
+          category: "private-hostname",
+          oldValue: currentEndpoint,
+          newValue: desiredHostname,
+        });
+      }
+    }
+    // When privateHostname is undefined (not in config), skip — leave Railway's value alone
+  }
+
+  // --- Custom domains ---
+  // Not part of EnvironmentConfig patches — handled via separate mutations.
+  // Compare desired State's domains vs current custom domains from service map.
+  if (ctx.customDomainsByService) {
+    for (const [name, svc] of Object.entries(ctx.desiredState.services)) {
+      const desiredDomains = new Map(svc.domains.map((d) => [d.domain, d.targetPort]));
+      const currentDomains = ctx.customDomainsByService.get(name) ?? [];
+      const currentDomainMap = new Map(currentDomains.map((d) => [d.domain, d]));
+
+      // Domains to add or update
+      for (const [domain, targetPort] of desiredDomains) {
+        const current = currentDomainMap.get(domain);
+        if (!current) {
+          entries.push({
+            path: `networking.customDomains.${domain}`,
+            action: "add",
+            serviceName: name,
+            category: "domain",
+            newValue: targetPort ? { port: targetPort } : {},
+          });
+        } else if (targetPort !== current.targetPort) {
+          entries.push({
+            path: `networking.customDomains.${domain}`,
+            action: "update",
+            serviceName: name,
+            category: "domain",
+            oldValue: current.targetPort ? { port: current.targetPort } : {},
+            newValue: targetPort ? { port: targetPort } : {},
+          });
+        }
+      }
+
+      // Domains to remove
+      for (const current of currentDomains) {
+        if (!desiredDomains.has(current.domain)) {
+          entries.push({
+            path: `networking.customDomains.${current.domain}`,
+            action: "remove",
+            serviceName: name,
+            category: "domain",
+            oldValue: current.domain,
+          });
+        }
+      }
+    }
+  }
+
+  // --- Railway domains (service domains) ---
+  // Not part of EnvironmentConfig patches — handled via separate mutations.
+  // Compare desired State's railwayDomain vs current service domain from serviceDomainByService.
+  // NOTE: EnvironmentConfig does NOT include serviceDomains from the Railway API,
+  // so we must use the serviceDomainByService map fetched via the GetProject query.
+  if (ctx.serviceDomainByService) {
+    for (const [name, svc] of Object.entries(ctx.desiredState.services)) {
+      const currentDomain = ctx.serviceDomainByService.get(name);
+      const currentHasDomain = !!currentDomain;
+      const desiredHasDomain = !!svc.railwayDomain;
+
+      if (desiredHasDomain && !currentHasDomain) {
+        entries.push({
+          path: "networking.serviceDomains",
+          action: "add",
+          serviceName: name,
+          category: "railway-domain",
+          newValue: svc.railwayDomain?.targetPort
+            ? `port ${svc.railwayDomain.targetPort}`
+            : "enabled",
+        });
+      } else if (!desiredHasDomain && currentHasDomain) {
+        entries.push({
+          path: `networking.serviceDomains.${currentDomain.domain}`,
+          action: "remove",
+          serviceName: name,
+          category: "railway-domain",
+          oldValue: currentDomain.domain,
+        });
+      } else if (desiredHasDomain && currentHasDomain) {
+        const desiredPort = svc.railwayDomain?.targetPort;
+        const currentPort = currentDomain.targetPort;
+        if (desiredPort !== currentPort) {
+          entries.push({
+            path: `networking.serviceDomains.${currentDomain.domain}`,
+            action: "update",
+            serviceName: name,
+            category: "railway-domain",
+            oldValue: currentPort,
+            newValue: desiredPort,
+          });
+        }
       }
     }
   }
@@ -392,75 +517,16 @@ function diffServiceNetworking(
   current: EnvConfigNetworking | undefined,
   entries: ConfigDiffEntry[],
 ): void {
-  // Custom domains
-  const desiredDomains = desired?.customDomains || {};
-  const currentDomains = current?.customDomains || {};
+  // Custom domains are handled via separate mutations — diffed at the top level
+  // in computeConfigDiff using desiredState.domains vs customDomainsByService.
 
-  for (const [domain, dv] of Object.entries(desiredDomains)) {
-    const cv = currentDomains[domain];
-    if (!cv) {
-      entries.push({
-        path: `networking.customDomains.${domain}`,
-        action: "add",
-        serviceName: name,
-        category: "domain",
-        newValue: dv,
-      });
-    } else if (!deepEqual(dv, cv)) {
-      entries.push({
-        path: `networking.customDomains.${domain}`,
-        action: "update",
-        serviceName: name,
-        category: "domain",
-        oldValue: cv,
-        newValue: dv,
-      });
-    }
-  }
-  for (const domain of Object.keys(currentDomains)) {
-    if (!(domain in desiredDomains)) {
-      entries.push({
-        path: `networking.customDomains.${domain}`,
-        action: "remove",
-        serviceName: name,
-        category: "domain",
-        oldValue: currentDomains[domain],
-      });
-    }
-  }
+  // Private network endpoint is handled via dedicated mutations in apply.ts.
+  // Diffing is done at the top level in computeConfigDiff using
+  // desiredState.privateHostname vs current config's privateNetworkEndpoint.
 
-  // Private network endpoint
-  if (
-    (desired?.privateNetworkEndpoint || undefined) !==
-    (current?.privateNetworkEndpoint || undefined)
-  ) {
-    const dv = desired?.privateNetworkEndpoint;
-    const cv = current?.privateNetworkEndpoint;
-    entries.push({
-      path: "networking.privateNetworkEndpoint",
-      action: dv ? (cv ? "update" : "add") : "remove",
-      serviceName: name,
-      category: "setting",
-      oldValue: cv,
-      newValue: dv,
-    });
-  }
-
-  // Service domains (railway domain) — removal detection
-  const desiredServiceDomains = desired?.serviceDomains || {};
-  const currentServiceDomains = current?.serviceDomains || {};
-  if (
-    Object.keys(desiredServiceDomains).length === 0 &&
-    Object.keys(currentServiceDomains).length > 0
-  ) {
-    entries.push({
-      path: "networking.serviceDomains",
-      action: "remove",
-      serviceName: name,
-      category: "domain",
-      oldValue: currentServiceDomains,
-    });
-  }
+  // Service domains (railway domain) are handled via separate mutations in apply.ts.
+  // Diffing is done at the top level in computeConfigDiff using desiredState.railwayDomain
+  // vs current EnvironmentConfig's serviceDomains.
 
   // TCP proxies — keyed by port number as string
   const desiredProxies = desired?.tcpProxies || {};
@@ -495,6 +561,7 @@ const RAILWAY_INTERNAL_FIELDS = new Set(["runtime", "useLegacyStacker"]);
 /** Known Railway defaults — used to enrich both desired and current configs */
 const DEPLOY_DEFAULTS: Record<string, unknown> = {
   restartPolicyType: "ON_FAILURE",
+  restartPolicyMaxRetries: 10,
   ipv6EgressEnabled: false,
 };
 
@@ -512,12 +579,17 @@ function enrichServiceDefaults(svc: EnvConfigService): EnvConfigService {
     ...svc,
     build: {
       ...svc.build,
-      builder: svc.build?.builder ?? (BUILD_DEFAULTS.builder as string),
+      // Railway forces builder to DOCKERFILE when dockerfilePath is set
+      builder:
+        svc.build?.builder ??
+        (svc.build?.dockerfilePath ? "DOCKERFILE" : (BUILD_DEFAULTS.builder as string)),
     },
     deploy: {
       ...svc.deploy,
       restartPolicyType:
         svc.deploy?.restartPolicyType ?? (DEPLOY_DEFAULTS.restartPolicyType as string),
+      restartPolicyMaxRetries:
+        svc.deploy?.restartPolicyMaxRetries ?? (DEPLOY_DEFAULTS.restartPolicyMaxRetries as number),
       ipv6EgressEnabled:
         svc.deploy?.ipv6EgressEnabled ?? (DEPLOY_DEFAULTS.ipv6EgressEnabled as boolean),
     },
@@ -529,8 +601,16 @@ function enrichServiceDefaults(svc: EnvConfigService): EnvConfigService {
  * Railway omits default fields from config (undefined), while our desired config
  * sends null for unset fields. Both mean "not set" — treat them as equal.
  */
+/**
+ * Normalize null/undefined/false to a common empty sentinel for comparison.
+ * Railway omits default fields from config — both null (our "clear" signal)
+ * and undefined (Railway's "not set") mean the same thing.
+ * Railway also omits boolean fields at their default value (false), so
+ * false is equivalent to undefined/null for diff purposes.
+ */
 function normalizeEmpty(v: unknown): unknown {
-  if (v === null || v === undefined) return undefined;
+  if (v === null || v === undefined || v === false || v === 0) return undefined;
+  if (Array.isArray(v) && v.length === 0) return undefined;
   return v;
 }
 
@@ -547,7 +627,6 @@ function diffServiceBuild(
     "dockerfilePath",
     "buildCommand",
     "watchPatterns",
-    "buildEnvironment",
   ];
   for (const field of fields) {
     const dv = normalizeEmpty(desired?.[field]);
@@ -563,6 +642,20 @@ function diffServiceBuild(
         newValue: dv,
       });
     }
+  }
+
+  // buildEnvironment: non-clearable — Railway ignores null. Only diff when desired includes it.
+  const dBuildEnv = normalizeEmpty(desired?.buildEnvironment);
+  const cBuildEnv = normalizeEmpty(current?.buildEnvironment);
+  if (dBuildEnv && !deepEqual(dBuildEnv, cBuildEnv)) {
+    entries.push({
+      path: "build.buildEnvironment",
+      action: cBuildEnv ? "update" : "add",
+      serviceName: name,
+      category: "setting",
+      oldValue: cBuildEnv,
+      newValue: dBuildEnv,
+    });
   }
 }
 
@@ -605,28 +698,63 @@ function diffServiceDeploy(
     }
   }
 
-  // Multi-region config — default-backed (Railway always assigns a region)
-  // Only diff when desired explicitly sets it; omission means "keep Railway default"
-  const dMrc = normalizeEmpty(desired?.multiRegionConfig);
-  const cMrc = normalizeEmpty(current?.multiRegionConfig);
-  if (dMrc && !deepEqual(dMrc, cMrc)) {
-    entries.push({
-      path: "deploy.multiRegionConfig",
-      action: dMrc ? (cMrc ? "update" : "add") : "remove",
-      serviceName: name,
-      category: "setting",
-      oldValue: cMrc,
-      newValue: dMrc,
-    });
+  // Multi-region config — treated as a collection of region keys
+  // When user sets region, diff individual region keys (add/update/remove)
+  // When user doesn't set region, skip (Railway keeps its default)
+  const dMrc = (desired?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
+  const cMrc = (current?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
+  if (Object.keys(dMrc).length > 0) {
+    // User configured region — diff per-key
+    for (const [region, dv] of Object.entries(dMrc)) {
+      const cv = cMrc[region];
+      if (!deepEqual(dv, cv)) {
+        entries.push({
+          path: `deploy.multiRegionConfig.${region}`,
+          action: cv !== undefined ? "update" : "add",
+          serviceName: name,
+          category: "setting",
+          oldValue: cv,
+          newValue: dv,
+        });
+      }
+    }
+    // Regions in current but not in desired — need removal
+    for (const region of Object.keys(cMrc)) {
+      if (!(region in dMrc)) {
+        entries.push({
+          path: `deploy.multiRegionConfig.${region}`,
+          action: "remove",
+          serviceName: name,
+          category: "setting",
+          oldValue: cMrc[region],
+        });
+      }
+    }
   }
 
   // Limit override — diff if either side has it
-  const dLimits = normalizeEmpty(desired?.limitOverride);
-  const cLimits = normalizeEmpty(current?.limitOverride);
-  if (!deepEqual(dLimits, cLimits) && (dLimits || cLimits)) {
+  // Railway keeps limitOverride once set, but { containers: null } clears limits.
+  // We must diff both directions: setting and clearing.
+  // When desired is { containers: null } and current is absent, both mean "no limits" — skip.
+  const dLimits = desired?.limitOverride;
+  const cLimits = current?.limitOverride;
+  const dIsEmpty =
+    dLimits === null ||
+    dLimits === undefined ||
+    dLimits.containers === null ||
+    dLimits.containers === undefined;
+  const cIsEmpty =
+    cLimits === null ||
+    cLimits === undefined ||
+    cLimits.containers === null ||
+    cLimits.containers === undefined;
+  if (!(dIsEmpty && cIsEmpty) && !deepEqual(dLimits, cLimits)) {
+    const isClearing = dIsEmpty;
+    const hadLimits = !cIsEmpty;
+    const action = isClearing && hadLimits ? "remove" : cLimits ? "update" : "add";
     entries.push({
       path: "deploy.limitOverride",
-      action: dLimits ? (cLimits ? "update" : "add") : "remove",
+      action,
       serviceName: name,
       category: "setting",
       oldValue: cLimits,
@@ -634,7 +762,12 @@ function diffServiceDeploy(
     });
   }
 
-  // Registry credentials — always include if desired has them (Railway never returns them)
+  // Registry credentials — always include if desired has them (Railway never returns them).
+  // NOTE: We cannot detect removal of registry credentials. Railway's API never returns
+  // credentials in the config response (they are write-only), so there is no "current"
+  // value to diff against. If a user removes registryCredentials from their config,
+  // we simply stop sending them — but we can't emit a "remove" diff entry because
+  // we never see them on the current side.
   if (desired?.registryCredentials) {
     entries.push({
       path: "deploy.registryCredentials",

@@ -63,7 +63,7 @@ export interface EnvConfigLimitOverride {
   containers?: {
     cpu?: number;
     memoryBytes?: number;
-  };
+  } | null;
 }
 
 /** Service deploy configuration */

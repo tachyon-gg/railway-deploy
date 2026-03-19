@@ -110,7 +110,7 @@ describe("buildEnvironmentConfig", () => {
     expect(source?.checkSuites).toBe(false);
   });
 
-  test("maps domains to networking.customDomains", () => {
+  test("domains are NOT included in config builder (handled via separate mutations)", () => {
     const state = makeState({
       services: {
         web: {
@@ -124,10 +124,8 @@ describe("buildEnvironmentConfig", () => {
       serviceNameToId: new Map([["web", "svc-1"]]),
       volumeIdByService: new Map(),
     });
-    expect(config.services?.["svc-1"]?.networking?.customDomains).toEqual({
-      "app.example.com": { port: 8080 },
-      "api.example.com": {},
-    });
+    // Custom domains are handled via separate mutations, not EnvironmentConfig patches
+    expect(config.services?.["svc-1"]?.networking?.customDomains).toBeUndefined();
   });
 
   test("maps deploy settings", () => {
@@ -142,7 +140,7 @@ describe("buildEnvironmentConfig", () => {
           cronSchedule: "0 * * * *",
           healthcheck: { path: "/health", timeout: 60 },
           serverless: true,
-          region: { region: "us-east4", numReplicas: 2 },
+          regions: { "us-east4": 2 },
         },
       },
     });
@@ -152,7 +150,8 @@ describe("buildEnvironmentConfig", () => {
     });
     const deploy = config.services?.["svc-1"]?.deploy;
     expect(deploy?.startCommand).toBe("npm start");
-    expect(deploy?.restartPolicyType).toBe("ON_FAILURE");
+    // Cron services: Railway forces restartPolicyType to NEVER
+    expect(deploy?.restartPolicyType).toBe("NEVER");
     expect(deploy?.cronSchedule).toBe("0 * * * *");
     expect(deploy?.healthcheckPath).toBe("/health");
     expect(deploy?.healthcheckTimeout).toBe(60);
@@ -317,17 +316,18 @@ describe("buildEnvironmentConfig", () => {
       serviceNameToId: new Map([["web", "svc-1"]]),
       volumeIdByService: new Map(),
     });
-    expect(config.services?.["svc-1"]?.networking?.privateNetworkEndpoint).toBe("web.internal");
+    // privateNetworkEndpoint is handled via dedicated mutations, not in config builder
+    expect(config.services?.["svc-1"]?.networking?.privateNetworkEndpoint).toBeUndefined();
   });
 
-  test("maps serviceDomains with tcpProxies into networking", () => {
+  test("maps tcpProxy into networking.tcpProxies", () => {
     const state = makeState({
       services: {
         db: {
           name: "db",
           variables: {},
           domains: [],
-          tcpProxies: [5432, 6379],
+          tcpProxy: 5432,
         },
       },
     });
@@ -335,8 +335,7 @@ describe("buildEnvironmentConfig", () => {
       serviceNameToId: new Map([["db", "svc-1"]]),
       volumeIdByService: new Map(),
     });
-    // tcpProxies don't go into networking in the config builder — but we confirm networking is set
-    expect(config.services?.["svc-1"]?.networking).toBeDefined();
+    expect(config.services?.["svc-1"]?.networking?.tcpProxies).toEqual({ "5432": {} });
   });
 
   test("maps metal into build.buildEnvironment=V3", () => {
@@ -366,7 +365,7 @@ describe("buildEnvironmentConfig", () => {
           variables: {},
           domains: [],
           autoUpdates: {
-            type: "digest",
+            type: "patch",
             schedule: [{ day: 1, startHour: 0, endHour: 6 }],
           },
         },
@@ -377,7 +376,7 @@ describe("buildEnvironmentConfig", () => {
       volumeIdByService: new Map(),
     });
     expect(config.services?.["svc-1"]?.source?.autoUpdates).toEqual({
-      type: "digest",
+      type: "patch",
       schedule: [{ day: 1, startHour: 0, endHour: 6 }],
     });
   });
@@ -417,7 +416,8 @@ describe("buildServiceConfig", () => {
     const config = buildServiceConfig(svc);
     expect(config.source?.image).toBe("nginx");
     expect(config.variables?.PORT).toEqual({ value: "3000" });
-    expect(config.networking?.customDomains?.["app.example.com"]).toEqual({});
+    // Custom domains handled via separate mutations, not in config builder
+    expect(config.networking?.customDomains).toBeUndefined();
     expect(config.deploy?.startCommand).toBe("nginx");
   });
 });

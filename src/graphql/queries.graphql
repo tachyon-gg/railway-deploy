@@ -26,6 +26,25 @@ query GetProject($id: String!) {
         node {
           id
           name
+          serviceInstances {
+            edges {
+              node {
+                environmentId
+                domains {
+                  customDomains {
+                    id
+                    domain
+                    targetPort
+                  }
+                  serviceDomains {
+                    id
+                    domain
+                    targetPort
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -68,5 +87,38 @@ query GetEgressGateways($serviceId: String!, $environmentId: String!) {
 query GetEnvironmentConfig($environmentId: String!) {
   environment(id: $environmentId) {
     config(decryptVariables: true)
+  }
+}
+
+query GetTcpProxies($serviceId: String!, $environmentId: String!) {
+  tcpProxies(serviceId: $serviceId, environmentId: $environmentId) {
+    id
+    applicationPort
+    domain
+    proxyPort
+  }
+}
+
+query GetPrivateNetworks($environmentId: String!) {
+  privateNetworks(environmentId: $environmentId) {
+    publicId
+    name
+    dnsName
+  }
+}
+
+query GetPrivateNetworkEndpoint(
+  $environmentId: String!
+  $privateNetworkId: String!
+  $serviceId: String!
+) {
+  privateNetworkEndpoint(
+    environmentId: $environmentId
+    privateNetworkId: $privateNetworkId
+    serviceId: $serviceId
+  ) {
+    publicId
+    dnsName
+    serviceInstanceId
   }
 }

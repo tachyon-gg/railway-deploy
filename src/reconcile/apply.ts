@@ -14,13 +14,30 @@ import { logger } from "../logger.js";
 import {
   clearEgressGateways,
   commitStagedChanges,
+  createBucket,
+  createCustomDomain,
   createEgressGateway,
   createService,
+  createServiceDomain,
   createVolume,
+  deleteCustomDomain,
+  deletePrivateNetworkEndpoint,
   deleteService,
+  deleteServiceDomain,
+  deleteTcpProxy,
+  deleteVolume,
+  renamePrivateNetworkEndpoint,
   stageEnvironmentChanges,
+  updateCustomDomain,
+  updateServiceDomain,
   updateVolume,
 } from "../railway/mutations.js";
+import type { DomainInfo } from "../railway/queries.js";
+import {
+  fetchEnvironmentConfig,
+  fetchPrivateNetworkEndpoint,
+  fetchTcpProxy,
+} from "../railway/queries.js";
 import type { ConfigDiff } from "../types/changeset.js";
 import type { EnvironmentConfig } from "../types/envconfig.js";
 import type { State } from "../types/state.js";
@@ -64,6 +81,9 @@ export async function applyConfigDiff(
   desiredState: State,
   serviceNameToId?: Map<string, string>,
   options?: { stageOnly?: boolean },
+  serviceDomainByService?: Map<string, DomainInfo>,
+  customDomainsByService?: Map<string, DomainInfo[]>,
+  volumeIdByService?: Map<string, string>,
 ): Promise<ApplyResult> {
   // Clone to avoid mutating the caller's config (safe for retries)
   const desiredConfig: EnvironmentConfig = JSON.parse(JSON.stringify(desiredConfigInput));
@@ -139,6 +159,37 @@ export async function applyConfigDiff(
     }
   }
 
+  // Register newly created service IDs so later steps (egress, domains) can resolve them
+  if (serviceNameToId) {
+    for (const [name, id] of createdServiceIds) {
+      serviceNameToId.set(name, id);
+    }
+  }
+
+  // Step 1c: For newly created services with region config, null-inject Railway's
+  // auto-assigned default regions. Railway assigns a default region on service creation
+  // that we don't know about at diff time (service didn't exist yet).
+  if (createdServiceIds.size > 0) {
+    try {
+      const postCreateConfig = await fetchEnvironmentConfig(client, environmentId);
+      for (const [, svcId] of createdServiceIds) {
+        const currentMrc = (postCreateConfig.services?.[svcId]?.deploy as Record<string, unknown>)
+          ?.multiRegionConfig as Record<string, unknown> | undefined;
+        const desiredMrc = (desiredConfig.services?.[svcId]?.deploy as Record<string, unknown>)
+          ?.multiRegionConfig as Record<string, unknown> | undefined;
+        if (currentMrc && desiredMrc) {
+          for (const region of Object.keys(currentMrc)) {
+            if (!(region in desiredMrc)) {
+              (desiredMrc as Record<string, unknown>)[region] = null;
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — convergence will clean up on next run
+    }
+  }
+
   // Track volume IDs created in Step 2 for cleanup on stage failure
   const createdVolumeIds: Array<{ id: string; serviceName: string }> = [];
 
@@ -173,6 +224,23 @@ export async function applyConfigDiff(
     }
   }
 
+  // Step 2b: Create new buckets (can't be done via patches)
+  for (const [key, bucket] of Object.entries(desiredState.buckets)) {
+    if (bucket.id) continue; // Already exists
+    try {
+      const created = await createBucket(client, projectId, bucket.name);
+      // Update the desired config with the new bucket ID
+      desiredConfig.buckets = desiredConfig.buckets || {};
+      desiredConfig.buckets[created.id] = { region: bucket.region || "iad", isCreated: true };
+      logger.success(`Created bucket: ${bucket.name} (${created.id})`);
+    } catch (err) {
+      result.errors.push({
+        step: `create-bucket:${key}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
   // Step 2.5: Null-inject removed collection items
   //
   // Settings (deploy.*, build.*, source.*, configFile, networking scalars) are
@@ -199,35 +267,55 @@ export async function applyConfigDiff(
           (desiredConfig.services[svcId].variables as Record<string, unknown>)[varName] = null;
         }
       }
-    } else if (entry.category === "domain" && entry.serviceName && serviceNameToId) {
+      // "domain" and "railway-domain" categories are handled via separate mutations
+      // in steps 4.6 and 4.7, not via null-injection in the patch.
+    } else if (
+      entry.category === "setting" &&
+      entry.path.startsWith("deploy.multiRegionConfig.") &&
+      entry.serviceName &&
+      serviceNameToId
+    ) {
+      // Region keys are a collection — need per-key null to remove old regions
       const svcId = serviceNameToId.get(entry.serviceName);
       if (svcId && desiredConfig.services?.[svcId]) {
-        if (entry.path === "networking.serviceDomains") {
-          // Railway domain removal — already nulled by config builder
-          continue;
-        }
-        const prefix = "networking.customDomains.";
-        const domainName = entry.path.startsWith(prefix)
-          ? entry.path.slice(prefix.length)
-          : entry.path.split(".").pop();
-        if (domainName) {
-          const svcCfg = desiredConfig.services[svcId];
-          svcCfg.networking = svcCfg.networking || {};
-          svcCfg.networking.customDomains = svcCfg.networking.customDomains || {};
-          (svcCfg.networking.customDomains as Record<string, unknown>)[domainName] = null;
-        }
+        const region = entry.path.slice("deploy.multiRegionConfig.".length);
+        const svcCfg = desiredConfig.services[svcId];
+        svcCfg.deploy = svcCfg.deploy || {};
+        const mrc =
+          ((svcCfg.deploy as Record<string, unknown>).multiRegionConfig as Record<
+            string,
+            unknown
+          >) || {};
+        mrc[region] = null;
+        (svcCfg.deploy as Record<string, unknown>).multiRegionConfig = mrc;
       }
-    } else if (entry.category === "volume" && entry.serviceName && serviceNameToId) {
+    } else if (
+      entry.category === "setting" &&
+      entry.path.startsWith("networking.tcpProxies.") &&
+      (entry.action === "remove" || entry.action === "update") &&
+      entry.serviceName &&
+      serviceNameToId
+    ) {
+      // TCP proxy removal/update: delete via mutation before staging.
+      // Patches can create proxies but can't remove them (null injection is ignored).
+      // For updates (port change), delete old proxy so the patch can create the new one.
       const svcId = serviceNameToId.get(entry.serviceName);
-      if (svcId && desiredConfig.services?.[svcId]) {
-        const volId = entry.path.split(".").pop();
-        if (volId) {
-          const svcCfg = desiredConfig.services[svcId];
-          svcCfg.volumeMounts = svcCfg.volumeMounts || {};
-          (svcCfg.volumeMounts as Record<string, unknown>)[volId] = null;
+      if (svcId) {
+        try {
+          const proxy = await fetchTcpProxy(client, svcId, environmentId);
+          if (proxy) {
+            await deleteTcpProxy(client, proxy.id);
+            logger.success(`Deleted TCP proxy ${proxy.applicationPort} for ${entry.serviceName}`);
+          }
+        } catch (err) {
+          result.errors.push({
+            step: `tcp-proxy-delete:${entry.serviceName}`,
+            error: extractErrorMessage(err),
+          });
         }
       }
     }
+    // "volume" remove entries: handled post-commit via volumeDelete (step 4.8)
     // "setting" category: already nulled by config builder — no injection needed
     // "service" category: handled by step 5 (deleteService)
   }
@@ -254,11 +342,16 @@ export async function applyConfigDiff(
         }
       }
 
-      // Warn about orphaned volumes (no public volumeDelete mutation available)
+      // Clean up orphaned volumes created in step 2
       for (const vol of createdVolumeIds) {
-        logger.warn(
-          `Orphaned volume for ${vol.serviceName} (ID: ${vol.id}) — delete manually in Railway dashboard`,
-        );
+        try {
+          await deleteVolume(client, vol.id);
+          logger.warn(`Cleaned up orphaned volume for ${vol.serviceName}`);
+        } catch {
+          logger.warn(
+            `Orphaned volume for ${vol.serviceName} (ID: ${vol.id}) — delete manually in Railway dashboard`,
+          );
+        }
       }
 
       return result; // Can't commit if stage failed
@@ -297,7 +390,8 @@ export async function applyConfigDiff(
   // Step 4.5: Handle static outbound IPs (egress gateways — separate from patch system)
   for (const entry of diff.entries) {
     if (entry.path !== "staticOutboundIps" || !entry.serviceName || !serviceNameToId) continue;
-    const svcId = serviceNameToId.get(entry.serviceName);
+    const svcId =
+      serviceNameToId.get(entry.serviceName) ?? createdServiceIds.get(entry.serviceName);
     if (!svcId) continue;
     try {
       if (entry.action === "add") {
@@ -310,6 +404,162 @@ export async function applyConfigDiff(
     } catch (err) {
       result.errors.push({
         step: `egress:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.6: Handle railway domains (service domains — separate from patch system)
+  for (const entry of diff.entries) {
+    if (entry.category !== "railway-domain" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId = serviceNameToId.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add") {
+        const port = desiredState.services[entry.serviceName]?.railwayDomain?.targetPort;
+        const created = await createServiceDomain(client, svcId, environmentId, port);
+        logger.success(`Created railway domain for ${entry.serviceName}: ${created.domain}`);
+      } else if (entry.action === "remove") {
+        const domainInfo = serviceDomainByService?.get(entry.serviceName);
+        if (domainInfo) {
+          await deleteServiceDomain(client, domainInfo.id);
+          logger.success(`Deleted railway domain for ${entry.serviceName}: ${domainInfo.domain}`);
+        }
+      } else if (entry.action === "update") {
+        const domainInfo = serviceDomainByService?.get(entry.serviceName);
+        if (domainInfo) {
+          const port = desiredState.services[entry.serviceName]?.railwayDomain?.targetPort;
+          await updateServiceDomain(client, {
+            serviceDomainId: domainInfo.id,
+            serviceId: svcId,
+            environmentId,
+            domain: domainInfo.domain,
+            targetPort: port,
+          });
+          logger.success(`Updated railway domain port for ${entry.serviceName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `railway-domain:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.7: Handle custom domains (separate mutations, not patches)
+  for (const entry of diff.entries) {
+    if (entry.category !== "domain" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId = serviceNameToId.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add") {
+        const domainPrefix = "networking.customDomains.";
+        const domain = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const port =
+          entry.newValue && typeof entry.newValue === "object" && "port" in entry.newValue
+            ? (entry.newValue as { port: number }).port
+            : undefined;
+        await createCustomDomain(client, projectId, svcId, environmentId, domain, port);
+        logger.success(`Created custom domain: ${domain}`);
+      } else if (entry.action === "remove") {
+        const domainPrefix = "networking.customDomains.";
+        const domainName = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const currentDomains = customDomainsByService?.get(entry.serviceName) ?? [];
+        const domainInfo = currentDomains.find((d) => d.domain === domainName);
+        if (domainInfo) {
+          await deleteCustomDomain(client, domainInfo.id);
+          logger.success(`Deleted custom domain: ${domainName}`);
+        }
+      } else if (entry.action === "update") {
+        const domainPrefix = "networking.customDomains.";
+        const domainName = entry.path.startsWith(domainPrefix)
+          ? entry.path.slice(domainPrefix.length)
+          : entry.path;
+        const currentDomains = customDomainsByService?.get(entry.serviceName) ?? [];
+        const domainInfo = currentDomains.find((d) => d.domain === domainName);
+        if (domainInfo) {
+          const port =
+            entry.newValue && typeof entry.newValue === "object" && "port" in entry.newValue
+              ? (entry.newValue as { port: number }).port
+              : undefined;
+          await updateCustomDomain(client, domainInfo.id, environmentId, port);
+          logger.success(`Updated custom domain: ${domainName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `custom-domain:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.75: Handle private network endpoints (dedicated mutations)
+  for (const entry of diff.entries) {
+    if (entry.category !== "private-hostname" || !entry.serviceName || !serviceNameToId) continue;
+    const svcId =
+      serviceNameToId.get(entry.serviceName) ?? createdServiceIds.get(entry.serviceName);
+    if (!svcId) continue;
+    try {
+      if (entry.action === "add" || entry.action === "update") {
+        // Fetch current endpoint to get its ID and private network ID.
+        // For newly created services, Railway may not have assigned an endpoint yet,
+        // so we retry with exponential backoff (1s, 2s, 4s).
+        let resolved = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+        if (!resolved) {
+          for (const delay of [1000, 2000, 4000]) {
+            await new Promise((r) => setTimeout(r, delay));
+            resolved = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+            if (resolved) break;
+          }
+        }
+        if (resolved) {
+          await renamePrivateNetworkEndpoint(
+            client,
+            resolved.id,
+            entry.newValue as string,
+            resolved.privateNetworkId,
+          );
+          logger.success(`Set private hostname for ${entry.serviceName}: ${entry.newValue}`);
+        } else {
+          result.errors.push({
+            step: `private-hostname:${entry.serviceName}`,
+            error: "Could not find private network endpoint to rename",
+          });
+        }
+      } else if (entry.action === "remove") {
+        const endpoint = await fetchPrivateNetworkEndpoint(client, environmentId, svcId);
+        if (endpoint) {
+          await deletePrivateNetworkEndpoint(client, endpoint.id);
+          logger.success(`Removed private hostname for ${entry.serviceName}`);
+        }
+      }
+    } catch (err) {
+      result.errors.push({
+        step: `private-hostname:${entry.serviceName}`,
+        error: extractErrorMessage(err),
+      });
+    }
+  }
+
+  // Step 4.8: Handle volume mount removal (volumeDelete — separate from patch system)
+  for (const entry of diff.entries) {
+    if (entry.category !== "volume" || entry.action !== "remove" || !entry.serviceName) continue;
+    const volId = entry.path.split(".").pop();
+    if (!volId) continue;
+    // Also check volumeIdByService for the volume ID
+    const resolvedVolId = volumeIdByService?.get(entry.serviceName) ?? volId;
+    try {
+      await deleteVolume(client, resolvedVolId);
+      logger.success(`Deleted volume for ${entry.serviceName}`);
+    } catch (err) {
+      result.errors.push({
+        step: `delete-volume:${entry.serviceName}`,
         error: extractErrorMessage(err),
       });
     }

@@ -80,6 +80,200 @@
               "repo": {
                 "description": "GitHub repository URL.",
                 "type": "string"
+              },
+              "branch": {
+                "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
+                "type": "string"
+              },
+              "root_directory": {
+                "description": "Root directory for the service (monorepo support).",
+                "type": "string"
+              },
+              "wait_for_ci": {
+                "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
+                "type": "boolean"
+              },
+              "registry_credentials": {
+                "description": "Registry credentials for private container images.",
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "Registry username. Supports ${ENV_VAR} syntax."
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "Registry password. Supports ${ENV_VAR} syntax."
+                  }
+                },
+                "required": ["username", "password"],
+                "additionalProperties": false
+              },
+              "auto_updates": {
+                "description": "Auto-update configuration for image-based services.",
+                "type": "object",
+                "properties": {
+                  "sunday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "monday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "tuesday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "wednesday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "thursday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "friday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  },
+                  "saturday": {
+                    "type": "object",
+                    "properties": {
+                      "start_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "Start hour (0-24)."
+                      },
+                      "end_hour": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24,
+                        "description": "End hour (0-24)."
+                      }
+                    },
+                    "required": ["start_hour", "end_hour"],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "build": {
+            "description": "Build configuration.",
+            "type": "object",
+            "properties": {
+              "builder": {
+                "description": "Builder: railpack (default), nixpacks, or dockerfile.",
+                "type": "string"
+              },
+              "command": {
+                "description": "Custom build command (Nixpacks/Heroku builds).",
+                "type": "string"
+              },
+              "dockerfile_path": {
+                "description": "Path to a custom Dockerfile.",
+                "type": "string"
+              },
+              "watch_patterns": {
+                "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false
@@ -145,27 +339,30 @@
             "required": ["name", "mount"],
             "additionalProperties": false
           },
-          "region": {
-            "description": "Deployment region.",
-            "type": "object",
-            "properties": {
-              "region": {
+          "regions": {
+            "description": "Deployment region(s).",
+            "anyOf": [
+              {
                 "type": "string",
                 "minLength": 1,
-                "description": "Railway region identifier."
+                "description": "Single region identifier (1 replica)."
               },
-              "num_replicas": {
-                "description": "Number of replicas in this region (default: 1).",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "description": "Map of region identifier to replica count (multi-region support)."
               }
-            },
-            "required": ["region"],
-            "additionalProperties": false
+            ]
           },
           "restart_policy": {
-            "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+            "description": "Restart policy: always, never, or on_failure. Can be a string or object with type and max_retries.",
             "anyOf": [
               {
                 "type": "string"
@@ -213,18 +410,6 @@
             "description": "Custom start command for the service.",
             "type": "string"
           },
-          "build_command": {
-            "description": "Custom build command (Nixpacks/Heroku builds).",
-            "type": "string"
-          },
-          "root_directory": {
-            "description": "Root directory for the service (monorepo support).",
-            "type": "string"
-          },
-          "dockerfile_path": {
-            "description": "Path to a custom Dockerfile.",
-            "type": "string"
-          },
           "pre_deploy_command": {
             "description": "Command(s) to run before deployment (e.g., DB migrations).",
             "anyOf": [
@@ -243,17 +428,6 @@
             "description": "Enable serverless mode. Containers scale to zero when idle.",
             "type": "boolean"
           },
-          "builder": {
-            "description": "Builder: RAILPACK, NIXPACKS, HEROKU, or PAKETO.",
-            "type": "string"
-          },
-          "watch_patterns": {
-            "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "draining_seconds": {
             "description": "Time in seconds between SIGTERM and SIGKILL during deployment teardown.",
             "type": "integer",
@@ -270,59 +444,25 @@
             "description": "Enable IPv6 outbound traffic for the service.",
             "type": "boolean"
           },
-          "branch": {
-            "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
-            "type": "string"
-          },
-          "wait_for_ci": {
-            "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
-            "type": "boolean"
-          },
-          "registry_credentials": {
-            "description": "Registry credentials for private container images.",
+          "railway_domain": {
+            "description": "Enable a Railway-provided domain (.up.railway.app). Specify target_port.",
             "type": "object",
             "properties": {
-              "username": {
-                "type": "string",
-                "description": "Registry username. Supports ${ENV_VAR} syntax."
-              },
-              "password": {
-                "type": "string",
-                "description": "Registry password. Supports ${ENV_VAR} syntax."
+              "target_port": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "description": "Target port for the Railway-provided domain."
               }
             },
-            "required": ["username", "password"],
+            "required": ["target_port"],
             "additionalProperties": false
           },
-          "railway_domain": {
-            "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port.",
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "target_port": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "description": "Target port for the Railway-provided domain."
-                  }
-                },
-                "required": ["target_port"],
-                "additionalProperties": false
-              }
-            ]
-          },
-          "tcp_proxies": {
-            "description": "Multiple TCP proxy application ports.",
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            }
+          "tcp_proxy": {
+            "description": "TCP proxy application port.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "limits": {
             "description": "Resource limits for the service.",
@@ -352,47 +492,6 @@
           "private_hostname": {
             "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
             "type": "string"
-          },
-          "auto_updates": {
-            "description": "Auto-update configuration for image-based services.",
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Update type (e.g., 'patch')."
-              },
-              "schedule": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "day": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 6,
-                      "description": "Day of week (0=Sunday, 6=Saturday)."
-                    },
-                    "start_hour": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 24,
-                      "description": "Start hour (0-24)."
-                    },
-                    "end_hour": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 24,
-                      "description": "End hour (0-24)."
-                    }
-                  },
-                  "required": ["day", "start_hour", "end_hour"],
-                  "additionalProperties": false
-                },
-                "description": "Update schedule entries."
-              }
-            },
-            "required": ["type", "schedule"],
-            "additionalProperties": false
           },
           "metal": {
             "description": "Enable Metal build environment (V3).",
@@ -432,6 +531,200 @@
                     "repo": {
                       "description": "GitHub repository URL.",
                       "type": "string"
+                    },
+                    "branch": {
+                      "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
+                      "type": "string"
+                    },
+                    "root_directory": {
+                      "description": "Root directory for the service (monorepo support).",
+                      "type": "string"
+                    },
+                    "wait_for_ci": {
+                      "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
+                      "type": "boolean"
+                    },
+                    "registry_credentials": {
+                      "description": "Registry credentials for private container images.",
+                      "type": "object",
+                      "properties": {
+                        "username": {
+                          "type": "string",
+                          "description": "Registry username. Supports ${ENV_VAR} syntax."
+                        },
+                        "password": {
+                          "type": "string",
+                          "description": "Registry password. Supports ${ENV_VAR} syntax."
+                        }
+                      },
+                      "required": ["username", "password"],
+                      "additionalProperties": false
+                    },
+                    "auto_updates": {
+                      "description": "Auto-update configuration for image-based services.",
+                      "type": "object",
+                      "properties": {
+                        "sunday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "monday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "tuesday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "wednesday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "thursday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "friday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        },
+                        "saturday": {
+                          "type": "object",
+                          "properties": {
+                            "start_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "Start hour (0-24)."
+                            },
+                            "end_hour": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 24,
+                              "description": "End hour (0-24)."
+                            }
+                          },
+                          "required": ["start_hour", "end_hour"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "build": {
+                  "description": "Build configuration.",
+                  "type": "object",
+                  "properties": {
+                    "builder": {
+                      "description": "Builder: railpack (default), nixpacks, or dockerfile.",
+                      "type": "string"
+                    },
+                    "command": {
+                      "description": "Custom build command (Nixpacks/Heroku builds).",
+                      "type": "string"
+                    },
+                    "dockerfile_path": {
+                      "description": "Path to a custom Dockerfile.",
+                      "type": "string"
+                    },
+                    "watch_patterns": {
+                      "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "additionalProperties": false
@@ -497,27 +790,30 @@
                   "required": ["name", "mount"],
                   "additionalProperties": false
                 },
-                "region": {
-                  "description": "Deployment region.",
-                  "type": "object",
-                  "properties": {
-                    "region": {
+                "regions": {
+                  "description": "Deployment region(s).",
+                  "anyOf": [
+                    {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Railway region identifier."
+                      "description": "Single region identifier (1 replica)."
                     },
-                    "num_replicas": {
-                      "description": "Number of replicas in this region (default: 1).",
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "description": "Map of region identifier to replica count (multi-region support)."
                     }
-                  },
-                  "required": ["region"],
-                  "additionalProperties": false
+                  ]
                 },
                 "restart_policy": {
-                  "description": "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
+                  "description": "Restart policy: always, never, or on_failure. Can be a string or object with type and max_retries.",
                   "anyOf": [
                     {
                       "type": "string"
@@ -565,18 +861,6 @@
                   "description": "Custom start command for the service.",
                   "type": "string"
                 },
-                "build_command": {
-                  "description": "Custom build command (Nixpacks/Heroku builds).",
-                  "type": "string"
-                },
-                "root_directory": {
-                  "description": "Root directory for the service (monorepo support).",
-                  "type": "string"
-                },
-                "dockerfile_path": {
-                  "description": "Path to a custom Dockerfile.",
-                  "type": "string"
-                },
                 "pre_deploy_command": {
                   "description": "Command(s) to run before deployment (e.g., DB migrations).",
                   "anyOf": [
@@ -595,17 +879,6 @@
                   "description": "Enable serverless mode. Containers scale to zero when idle.",
                   "type": "boolean"
                 },
-                "builder": {
-                  "description": "Builder: RAILPACK, NIXPACKS, HEROKU, or PAKETO.",
-                  "type": "string"
-                },
-                "watch_patterns": {
-                  "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
                 "draining_seconds": {
                   "description": "Time in seconds between SIGTERM and SIGKILL during deployment teardown.",
                   "type": "integer",
@@ -622,59 +895,25 @@
                   "description": "Enable IPv6 outbound traffic for the service.",
                   "type": "boolean"
                 },
-                "branch": {
-                  "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
-                  "type": "string"
-                },
-                "wait_for_ci": {
-                  "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
-                  "type": "boolean"
-                },
-                "registry_credentials": {
-                  "description": "Registry credentials for private container images.",
+                "railway_domain": {
+                  "description": "Enable a Railway-provided domain (.up.railway.app). Specify target_port.",
                   "type": "object",
                   "properties": {
-                    "username": {
-                      "type": "string",
-                      "description": "Registry username. Supports ${ENV_VAR} syntax."
-                    },
-                    "password": {
-                      "type": "string",
-                      "description": "Registry password. Supports ${ENV_VAR} syntax."
+                    "target_port": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Target port for the Railway-provided domain."
                     }
                   },
-                  "required": ["username", "password"],
+                  "required": ["target_port"],
                   "additionalProperties": false
                 },
-                "railway_domain": {
-                  "description": "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port.",
-                  "anyOf": [
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "target_port": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991,
-                          "description": "Target port for the Railway-provided domain."
-                        }
-                      },
-                      "required": ["target_port"],
-                      "additionalProperties": false
-                    }
-                  ]
-                },
-                "tcp_proxies": {
-                  "description": "Multiple TCP proxy application ports.",
-                  "type": "array",
-                  "items": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  }
+                "tcp_proxy": {
+                  "description": "TCP proxy application port.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "limits": {
                   "description": "Resource limits for the service.",
@@ -704,47 +943,6 @@
                 "private_hostname": {
                   "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
                   "type": "string"
-                },
-                "auto_updates": {
-                  "description": "Auto-update configuration for image-based services.",
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "description": "Update type (e.g., 'patch')."
-                    },
-                    "schedule": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "day": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 6,
-                            "description": "Day of week (0=Sunday, 6=Saturday)."
-                          },
-                          "start_hour": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 24,
-                            "description": "Start hour (0-24)."
-                          },
-                          "end_hour": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 24,
-                            "description": "End hour (0-24)."
-                          }
-                        },
-                        "required": ["day", "start_hour", "end_hour"],
-                        "additionalProperties": false
-                      },
-                      "description": "Update schedule entries."
-                    }
-                  },
-                  "required": ["type", "schedule"],
-                  "additionalProperties": false
                 },
                 "metal": {
                   "description": "Enable Metal build environment (V3).",

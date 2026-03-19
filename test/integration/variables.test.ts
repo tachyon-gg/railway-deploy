@@ -1,20 +1,15 @@
 import { afterAll, beforeAll, describe, expect } from "bun:test";
-import { createService } from "../../src/railway/mutations.js";
 import {
-  client,
+  apply,
+  converges,
   createTestEnvironment,
   deleteTestEnvironment,
-  ENV_ID,
   hasToken,
   initClient,
   itif,
-  PROJECT_ID,
-  patchAndFetch,
-  TEST_PREFIX,
-  waitForConfig,
+  svcName,
+  yaml,
 } from "./helpers.js";
-
-const SVC_VAR = `${TEST_PREFIX}-var`;
 
 beforeAll(async () => {
   initClient();
@@ -26,124 +21,154 @@ afterAll(async () => {
 });
 
 describe("Railway Integration — service variables", () => {
-  let serviceId: string;
+  const name = svcName("vars");
 
-  beforeAll(async () => {
-    if (!hasToken) return;
-    const result = await createService(
-      client,
-      PROJECT_ID,
-      SVC_VAR,
-      { image: "nginx:latest" },
-      ENV_ID,
+  itif(hasToken)("create: sets PORT and HOST", async () => {
+    const s = await apply(
+      yaml(
+        name,
+        `    variables:
+      PORT: "3000"
+      HOST: "0.0.0.0"`,
+      ),
     );
-    serviceId = result.id;
-    await waitForConfig((c) => c.services?.[serviceId] !== undefined);
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.variables?.PORT?.value).toBe("3000");
+    expect(s.services[name]?.variables?.HOST?.value).toBe("0.0.0.0");
   });
 
-  itif(hasToken)("adds variables", async () => {
-    const config = await patchAndFetch(
-      {
-        services: {
-          [serviceId]: {
-            variables: {
-              PORT: { value: "3000" },
-              HOST: { value: "0.0.0.0" },
-              DB_URL: { value: "postgres://localhost/test" },
-            },
-          },
-        },
-      },
-      (c) => c.services?.[serviceId]?.variables?.PORT?.value === "3000",
-    );
-    expect(config.services?.[serviceId]?.variables?.PORT?.value).toBe("3000");
-    expect(config.services?.[serviceId]?.variables?.HOST?.value).toBe("0.0.0.0");
-    expect(config.services?.[serviceId]?.variables?.DB_URL?.value).toBe(
-      "postgres://localhost/test",
-    );
+  itif(hasToken)("converge after create", async () => {
+    expect(
+      await converges(
+        yaml(
+          name,
+          `    variables:
+      PORT: "3000"
+      HOST: "0.0.0.0"`,
+        ),
+      ),
+    ).toEqual([]);
   });
 
-  itif(hasToken)("updates a variable value (merge preserves others)", async () => {
-    const config = await patchAndFetch({
-      services: {
-        [serviceId]: {
-          variables: {
-            PORT: { value: "8080" },
-          },
-        },
-      },
-    });
-    expect(config.services?.[serviceId]?.variables?.PORT?.value).toBe("8080");
-    // Others should still exist with merge:true
-    expect(config.services?.[serviceId]?.variables?.HOST?.value).toBe("0.0.0.0");
-    expect(config.services?.[serviceId]?.variables?.DB_URL?.value).toBe(
-      "postgres://localhost/test",
+  itif(hasToken)("update: changes PORT value", async () => {
+    const s = await apply(
+      yaml(
+        name,
+        `    variables:
+      PORT: "8080"
+      HOST: "0.0.0.0"`,
+      ),
     );
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.variables?.PORT?.value).toBe("8080");
+    expect(s.services[name]?.variables?.HOST?.value).toBe("0.0.0.0");
   });
 
-  itif(hasToken)("deletes variable with null value in merge mode", async () => {
-    const config = await patchAndFetch({
-      services: {
-        [serviceId]: {
-          variables: {
-            DB_URL: null as unknown as { value: string },
-          },
-        },
-      },
-    });
-    // null with merge:true deletes the variable
-    expect(config.services?.[serviceId]?.variables?.DB_URL).toBeUndefined();
-    // Other variables should still exist
-    expect(config.services?.[serviceId]?.variables?.PORT?.value).toBe("8080");
-    expect(config.services?.[serviceId]?.variables?.HOST?.value).toBe("0.0.0.0");
+  itif(hasToken)("converge after update", async () => {
+    expect(
+      await converges(
+        yaml(
+          name,
+          `    variables:
+      PORT: "8080"
+      HOST: "0.0.0.0"`,
+        ),
+      ),
+    ).toEqual([]);
   });
 
-  itif(hasToken)("handles Railway reference syntax in values", async () => {
-    const config = await patchAndFetch({
-      services: {
-        [serviceId]: {
-          variables: {
-            REDIS_URL: { value: "${{Redis.REDIS_URL}}" },
-            ENV: { value: "${{RAILWAY_ENVIRONMENT}}" },
-          },
-        },
-      },
-    });
-    expect(config.services?.[serviceId]?.variables?.REDIS_URL?.value).toBe("${{Redis.REDIS_URL}}");
-    expect(config.services?.[serviceId]?.variables?.ENV?.value).toBe("${{RAILWAY_ENVIRONMENT}}");
+  itif(hasToken)("remove: deletes HOST via null-injection", async () => {
+    const s = await apply(
+      yaml(
+        name,
+        `    variables:
+      PORT: "8080"`,
+      ),
+    );
+    expect(s.errors).toEqual([]);
+    expect(s.services[name]?.variables?.PORT?.value).toBe("8080");
+    expect(s.services[name]?.variables?.HOST).toBeUndefined();
+  });
+
+  itif(hasToken)("converge after remove", async () => {
+    expect(
+      await converges(
+        yaml(
+          name,
+          `    variables:
+      PORT: "8080"`,
+        ),
+      ),
+    ).toEqual([]);
   });
 });
 
 describe("Railway Integration — shared variables", () => {
-  itif(hasToken)("adds shared variables", async () => {
-    const config = await patchAndFetch({
-      sharedVariables: {
-        ADMIN_PORT: { value: "8081" },
-        APP_ENV: { value: "test" },
-      },
-    });
-    expect(config.sharedVariables?.ADMIN_PORT?.value).toBe("8081");
-    expect(config.sharedVariables?.APP_ENV?.value).toBe("test");
+  const name = svcName("shvar");
+
+  itif(hasToken)("create: sets AUDIT_KEY shared variable", async () => {
+    const s = await apply(
+      yaml(
+        name,
+        "",
+        `shared_variables:
+  AUDIT_KEY: "key-abc-123"
+`,
+      ),
+    );
+    expect(s.errors).toEqual([]);
+    expect(s.sharedVariables?.AUDIT_KEY?.value).toBe("key-abc-123");
   });
 
-  itif(hasToken)("updates shared variable (merge preserves others)", async () => {
-    const config = await patchAndFetch({
-      sharedVariables: {
-        APP_ENV: { value: "production" },
-      },
-    });
-    expect(config.sharedVariables?.APP_ENV?.value).toBe("production");
-    expect(config.sharedVariables?.ADMIN_PORT?.value).toBe("8081");
+  itif(hasToken)("converge after create", async () => {
+    expect(
+      await converges(
+        yaml(
+          name,
+          "",
+          `shared_variables:
+  AUDIT_KEY: "key-abc-123"
+`,
+        ),
+      ),
+    ).toEqual([]);
   });
 
-  itif(hasToken)("deletes shared variable with null in merge mode", async () => {
-    const config = await patchAndFetch({
-      sharedVariables: {
-        ADMIN_PORT: null as unknown as { value: string },
-      },
-    });
-    expect(config.sharedVariables?.ADMIN_PORT).toBeUndefined();
-    // Other shared variable should still exist
-    expect(config.sharedVariables?.APP_ENV?.value).toBe("production");
+  itif(hasToken)("update: changes AUDIT_KEY value", async () => {
+    const s = await apply(
+      yaml(
+        name,
+        "",
+        `shared_variables:
+  AUDIT_KEY: "key-xyz-789"
+`,
+      ),
+    );
+    expect(s.errors).toEqual([]);
+    expect(s.sharedVariables?.AUDIT_KEY?.value).toBe("key-xyz-789");
+  });
+
+  itif(hasToken)("converge after update", async () => {
+    expect(
+      await converges(
+        yaml(
+          name,
+          "",
+          `shared_variables:
+  AUDIT_KEY: "key-xyz-789"
+`,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  itif(hasToken)("remove: deletes AUDIT_KEY", async () => {
+    const s = await apply(yaml(name, ""));
+    expect(s.errors).toEqual([]);
+    expect(s.sharedVariables?.AUDIT_KEY).toBeUndefined();
+  });
+
+  itif(hasToken)("converge after remove", async () => {
+    expect(await converges(yaml(name, ""))).toEqual([]);
   });
 });

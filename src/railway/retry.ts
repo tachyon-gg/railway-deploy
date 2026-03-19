@@ -27,7 +27,8 @@ function isRetryable(error: unknown): boolean {
       msg.includes("econnrefused") ||
       msg.includes("etimedout") ||
       msg.includes("fetch failed") ||
-      msg.includes("network")
+      msg.includes("network") ||
+      msg.includes("problem processing request")
     )
       return true;
   }

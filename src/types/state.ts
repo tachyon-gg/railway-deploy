@@ -3,7 +3,7 @@
 /** Default healthcheck timeout in seconds */
 export const DEFAULT_HEALTHCHECK_TIMEOUT = 300;
 
-/** Default number of replicas */
+/** Default number of replicas (for string shorthand regions) */
 export const DEFAULT_NUM_REPLICAS = 1;
 
 /** Auto-update schedule entry */
@@ -32,10 +32,7 @@ export interface ServiceState {
     name: string;
     mount: string;
   };
-  region?: {
-    region: string;
-    numReplicas: number;
-  };
+  regions?: Record<string, number>;
   restartPolicy?: string;
   healthcheck?: {
     path: string;
@@ -59,8 +56,8 @@ export interface ServiceState {
   registryCredentials?: { username: string; password: string };
   /** Railway-provided domain configuration */
   railwayDomain?: { targetPort?: number };
-  /** TCP proxy application ports */
-  tcpProxies?: number[];
+  /** TCP proxy application port */
+  tcpProxy?: number;
   /** Resource limits */
   limits?: { memoryGB?: number; vCPUs?: number };
   /** Railway config file path */

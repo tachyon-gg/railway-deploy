@@ -2,17 +2,18 @@ import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import { logger } from "../logger.js";
+import type { BucketState, ServiceState, State, VolumeState } from "../types/state.js";
+import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
+import { expandParamsDeep, resolveParams } from "./params.js";
 import type {
   DomainEntry,
   ProjectServiceEntry,
   ServiceEntry,
   ServiceEnvironmentOverride,
+  ServiceFields,
   ServiceTemplate,
   SharedVariableEntry,
-} from "../types/config.js";
-import type { BucketState, ServiceState, State, VolumeState } from "../types/state.js";
-import { DEFAULT_HEALTHCHECK_TIMEOUT, DEFAULT_NUM_REPLICAS } from "../types/state.js";
-import { expandParamsDeep, resolveParams } from "./params.js";
+} from "./schema.js";
 import {
   validateProjectConfig,
   validateResolvedService,
@@ -301,6 +302,8 @@ export function loadProjectConfig(
 
 /**
  * Resolve a single service entry (with optional template) into ServiceState.
+ * Templates are plain service defaults — entry fields override template fields
+ * using the same merge rules as environment overrides.
  */
 function resolveService(
   name: string,
@@ -308,7 +311,7 @@ function resolveService(
   configDir: string,
   lenient = false,
 ): { service: ServiceState; deleted: string[] } {
-  let template: ServiceTemplate | undefined;
+  let templateFields: ServiceTemplate | undefined;
 
   if (entry.template) {
     const templatePath = resolve(configDir, entry.template);
@@ -331,80 +334,109 @@ function resolveService(
         `Invalid YAML in template ${templatePath}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    template = validateServiceTemplate(parsed, templatePath);
+    templateFields = validateServiceTemplate(parsed, templatePath);
   }
 
-  // Resolve params if template has param defs
-  // service_name is a built-in param — always set to the service's config key
-  if ("service_name" in (entry.params ?? {}) || "service_name" in (template?.params ?? {})) {
+  // Resolve params and expand %{param} in template values, then merge with entry.
+  // service_name is a built-in param — always set to the service's config key.
+  if ("service_name" in (entry.params ?? {}) || "service_name" in (templateFields?.params ?? {})) {
     throw new Error(
       `"service_name" is a built-in parameter and cannot be overridden (service "${name}")`,
     );
   }
-  let params: Record<string, string> = { service_name: name };
-  if (template?.params) {
-    params = { ...resolveParams(template.params, entry.params || {}), service_name: name };
+  let merged: ServiceFields;
+  if (templateFields) {
+    // Resolve params: template defs + entry values
+    let params: Record<string, string> = { service_name: name };
+    if (templateFields.params) {
+      params = { ...resolveParams(templateFields.params, entry.params || {}), service_name: name };
+    }
+    // Expand %{param} in template values (strings only — enums are protected by schema)
+    const { params: _tp, ...expandable } = templateFields;
+    const expanded = expandParamsDeep(expandable, params) as ServiceFields;
+
+    // Merge: entry overrides expanded template
+    const { template: _, params: _ep, ...entryFields } = entry;
+    const base = { ...expanded };
+    // Shallow-merge variables
+    if (entryFields.variables) {
+      (base as Record<string, unknown>).variables = {
+        ...expanded.variables,
+        ...entryFields.variables,
+      };
+    }
+    // All other entry fields replace entirely
+    for (const [key, value] of Object.entries(entryFields)) {
+      if (value !== undefined && key !== "variables") {
+        (base as Record<string, unknown>)[key] = value;
+      }
+    }
+    merged = base;
+  } else {
+    const { template: _, params: _ep, ...entryFields } = entry;
+    merged = entryFields;
   }
 
-  // Resolve each field: entry overrides template. Template values get %{param} expansion.
-  const pick = <T>(entryVal: T | undefined, templateVal: T | undefined): T | undefined => {
-    if (entryVal !== undefined) return entryVal;
-    if (templateVal !== undefined) return expandParamsDeep(templateVal, params) as T;
-    return undefined;
-  };
-
-  const source = pick(entry.source, template?.source);
-  const volume = pick(entry.volume, template?.volume);
-  const region = pick(entry.region, template?.region);
-  const restartPolicyRaw = pick(entry.restart_policy, template?.restart_policy);
-  const healthcheck = pick(entry.healthcheck, template?.healthcheck);
-  const cronSchedule = pick(entry.cron_schedule, template?.cron_schedule);
-  const startCommand = pick(entry.start_command, template?.start_command);
-  const buildCommand = pick(entry.build_command, template?.build_command);
-  const rootDirectory = pick(entry.root_directory, template?.root_directory);
-  const dockerfilePath = pick(entry.dockerfile_path, template?.dockerfile_path);
-  const preDeployCommand = pick(entry.pre_deploy_command, template?.pre_deploy_command);
+  const source = merged.source;
+  const build = merged.build;
+  const volume = merged.volume;
+  const regionsRaw = merged.regions;
+  const restartPolicyRaw = merged.restart_policy;
+  const healthcheck = merged.healthcheck;
+  const cronSchedule = merged.cron_schedule;
+  const startCommand = merged.start_command;
+  const preDeployCommand = merged.pre_deploy_command;
   // Parse restart_policy: string shorthand or object form
+  const RESTART_POLICY_MAP: Record<string, string> = {
+    always: "ALWAYS",
+    never: "NEVER",
+    on_failure: "ON_FAILURE",
+  };
   let restartPolicy: string | undefined;
   let restartPolicyMaxRetries: number | undefined;
   if (typeof restartPolicyRaw === "string") {
-    restartPolicy = restartPolicyRaw;
+    restartPolicy = RESTART_POLICY_MAP[restartPolicyRaw] ?? restartPolicyRaw;
   } else if (restartPolicyRaw) {
-    restartPolicy = restartPolicyRaw.type;
+    restartPolicy = RESTART_POLICY_MAP[restartPolicyRaw.type] ?? restartPolicyRaw.type;
     if (restartPolicyRaw.max_retries !== undefined)
       restartPolicyMaxRetries = restartPolicyRaw.max_retries;
   }
-  const serverless = entry.serverless ?? template?.serverless;
-  const builder = pick(entry.builder, template?.builder);
-  const watchPatterns = pick(entry.watch_patterns, template?.watch_patterns);
-  const drainingSeconds = entry.draining_seconds ?? template?.draining_seconds;
-  const overlapSeconds = entry.overlap_seconds ?? template?.overlap_seconds;
-  const ipv6Egress = entry.ipv6_egress ?? template?.ipv6_egress;
-  const branch = pick(entry.branch, template?.branch);
-  const waitForCi = entry.wait_for_ci ?? template?.wait_for_ci;
-  const registryCredentials = entry.registry_credentials ?? template?.registry_credentials;
-  const railwayDomain = entry.railway_domain ?? template?.railway_domain;
-  const tcpProxies = entry.tcp_proxies ?? template?.tcp_proxies;
-  const limits = entry.limits ?? template?.limits;
-  const railwayConfigFile = pick(entry.railway_config_file, template?.railway_config_file);
-  const staticOutboundIps = entry.static_outbound_ips ?? template?.static_outbound_ips;
-  const privateHostname = pick(entry.private_hostname, template?.private_hostname);
-  const autoUpdates = entry.auto_updates ?? template?.auto_updates;
-  const metal = entry.metal ?? template?.metal;
+  const serverless = merged.serverless;
+  const BUILDER_MAP: Record<string, string> = {
+    railpack: "RAILPACK",
+    nixpacks: "NIXPACKS",
+    dockerfile: "DOCKERFILE",
+  };
+  // Read build fields from nested build object (discriminated by builder type)
+  const builderRaw = build?.builder;
+  const builder = builderRaw ? (BUILDER_MAP[builderRaw] ?? builderRaw) : undefined;
+  const buildCommand = build && "command" in build ? build.command : undefined;
+  const dockerfilePath = build && "dockerfile_path" in build ? build.dockerfile_path : undefined;
+  const watchPatterns = build?.watch_patterns;
+  const drainingSeconds = merged.draining_seconds;
+  const overlapSeconds = merged.overlap_seconds;
+  const ipv6Egress = merged.ipv6_egress;
+  // Read source-nested fields (discriminated by image vs repo)
+  const branch = source && "branch" in source ? source.branch : undefined;
+  const rootDirectory = source && "root_directory" in source ? source.root_directory : undefined;
+  const waitForCi = source && "wait_for_ci" in source ? source.wait_for_ci : undefined;
+  const registryCredentials =
+    source && "registry_credentials" in source ? source.registry_credentials : undefined;
+  const autoUpdates = source && "auto_updates" in source ? source.auto_updates : undefined;
+  const railwayDomain = merged.railway_domain;
+  const tcpProxy = merged.tcp_proxy;
+  const limits = merged.limits;
+  const railwayConfigFile = merged.railway_config_file;
+  const staticOutboundIps = merged.static_outbound_ips;
+  const privateHostname = merged.private_hostname;
+  const metal = build && "metal" in build ? build.metal : undefined;
 
-  // Normalize domains: entry domains override template domains if specified
-  let templateDomains: Array<{ domain: string; targetPort?: number }> = [];
-  if (template?.domains) {
-    templateDomains = normalizeDomains(expandParamsDeep(template.domains, params) as DomainEntry[]);
-  }
-  const entryDomains = normalizeDomains(entry.domains);
-  const domains = entryDomains.length > 0 ? entryDomains : templateDomains;
+  // Normalize domains
+  const domains = normalizeDomains(merged.domains);
 
-  // Merge variables: template vars (param-expanded) + env file vars
-  const templateVars = template?.variables ? expandParamsDeep(template.variables, params) : {};
+  // Merge variables (already merged above if template existed)
   const mergedVars: Record<string, string | null> = {
-    ...templateVars,
-    ...(entry.variables || {}),
+    ...(merged.variables || {}),
   };
 
   // Track deleted vars (null values) before resolving
@@ -433,13 +465,18 @@ function resolveService(
     domains: resolvedDomains,
   };
 
-  if (source) service.source = source;
-  if (volume) service.volume = { name: volume.name, mount: volume.mount };
-  if (region) {
-    service.region = {
-      region: region.region,
-      numReplicas: region.num_replicas ?? DEFAULT_NUM_REPLICAS,
+  if (source)
+    service.source = {
+      ...("image" in source ? { image: source.image } : {}),
+      ...("repo" in source ? { repo: source.repo } : {}),
     };
+  if (volume) service.volume = { name: volume.name, mount: volume.mount };
+  if (regionsRaw !== undefined) {
+    if (typeof regionsRaw === "string") {
+      service.regions = { [regionsRaw]: DEFAULT_NUM_REPLICAS };
+    } else {
+      service.regions = regionsRaw;
+    }
   }
   if (restartPolicy) service.restartPolicy = restartPolicy;
   if (healthcheck)
@@ -474,14 +511,9 @@ function resolveService(
     };
   }
   if (railwayDomain !== undefined) {
-    if (railwayDomain === true) {
-      service.railwayDomain = {};
-    } else if (typeof railwayDomain === "object") {
-      service.railwayDomain = { targetPort: railwayDomain.target_port };
-    }
-    // railwayDomain === false means no railway domain (don't set)
+    service.railwayDomain = { targetPort: railwayDomain.target_port };
   }
-  if (tcpProxies && tcpProxies.length > 0) service.tcpProxies = tcpProxies;
+  if (tcpProxy !== undefined) service.tcpProxy = tcpProxy;
   if (limits) {
     service.limits = {
       ...(limits.memory_gb !== undefined ? { memoryGB: limits.memory_gb } : {}),
@@ -490,16 +522,25 @@ function resolveService(
   }
   if (railwayConfigFile) service.railwayConfigFile = railwayConfigFile;
   if (staticOutboundIps !== undefined) service.staticOutboundIps = staticOutboundIps;
-  if (privateHostname) service.privateHostname = privateHostname;
+  if (privateHostname !== undefined) service.privateHostname = privateHostname;
   if (autoUpdates) {
-    service.autoUpdates = {
-      type: autoUpdates.type,
-      schedule: autoUpdates.schedule.map((s) => ({
-        day: s.day,
-        startHour: s.start_hour,
-        endHour: s.end_hour,
-      })),
-    };
+    const dayNames = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ] as const;
+    const schedule: { day: number; startHour: number; endHour: number }[] = [];
+    for (let i = 0; i < dayNames.length; i++) {
+      const window = autoUpdates[dayNames[i]];
+      if (window) {
+        schedule.push({ day: i, startHour: window.start_hour, endHour: window.end_hour });
+      }
+    }
+    service.autoUpdates = { type: "patch", schedule };
   }
   if (metal !== undefined) service.metal = metal;
 

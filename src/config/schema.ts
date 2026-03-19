@@ -1,20 +1,111 @@
 import { z } from "zod/v4";
 
-// --- Structural schemas (validate shape before param expansion) ---
-// These accept strings that may contain %{param} or ${ENV_VAR} placeholders.
+// --- Structural schemas (validate shape before env var expansion) ---
 
-const SourceConfigSchema = z
+const RegistryCredentialsSchema = z
   .object({
-    image: z
+    username: z.string().describe("Registry username. Supports ${ENV_VAR} syntax."),
+    password: z.string().describe("Registry password. Supports ${ENV_VAR} syntax."),
+  })
+  .strict()
+  .describe("Registry credentials for private container images.");
+
+// --- Auto-updates ---
+
+const AutoUpdateWindowSchema = z
+  .object({
+    start_hour: z.number().int().min(0).max(24).describe("Start hour (0-24)."),
+    end_hour: z.number().int().min(0).max(24).describe("End hour (0-24)."),
+  })
+  .strict();
+
+const AutoUpdateConfigSchema = z
+  .object({
+    sunday: AutoUpdateWindowSchema.optional(),
+    monday: AutoUpdateWindowSchema.optional(),
+    tuesday: AutoUpdateWindowSchema.optional(),
+    wednesday: AutoUpdateWindowSchema.optional(),
+    thursday: AutoUpdateWindowSchema.optional(),
+    friday: AutoUpdateWindowSchema.optional(),
+    saturday: AutoUpdateWindowSchema.optional(),
+  })
+  .strict()
+  .describe("Auto-update schedule for image-based services. Specify update windows per day.");
+
+// --- Source ---
+
+const RepoSourceSchema = z
+  .object({
+    repo: z.string().describe("GitHub repository URL."),
+    branch: z
       .string()
       .optional()
-      .describe("Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1')."),
-    repo: z.string().optional().describe("GitHub repository URL."),
+      .describe("GitHub branch to deploy from. Changes are auto-deployed from this branch."),
+    root_directory: z
+      .string()
+      .optional()
+      .describe("Root directory for the service (monorepo support)."),
+    wait_for_ci: z
+      .boolean()
+      .optional()
+      .describe("Wait for CI check suites (GitHub Actions) to complete before deploying."),
   })
-  .describe("Service source — specify either 'image' (container) or 'repo' (GitHub), not both.")
-  .refine((s) => (s.image ? !s.repo : !!s.repo), {
-    message: "source must have either 'image' or 'repo', not both or neither",
-  });
+  .strict()
+  .describe("Repository source — deploy from a GitHub repo.");
+
+const ImageSourceSchema = z
+  .object({
+    image: z.string().describe("Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1')."),
+    registry_credentials: RegistryCredentialsSchema.optional().describe(
+      "Registry credentials for private container images.",
+    ),
+    auto_updates: AutoUpdateConfigSchema.optional().describe(
+      "Auto-update schedule for image-based services.",
+    ),
+  })
+  .strict()
+  .describe("Image source — deploy from a container image.");
+
+const SourceConfigSchema = z
+  .union([RepoSourceSchema, ImageSourceSchema])
+  .describe("Service source — either a GitHub repo or a container image.");
+
+// --- Build ---
+
+const RailpackBuildSchema = z
+  .object({
+    builder: z.literal("railpack"),
+    command: z.string().optional(),
+    watch_patterns: z.array(z.string()).optional(),
+    metal: z.boolean().optional().describe("Enable Metal build environment."),
+  })
+  .strict();
+
+const NixpacksBuildSchema = z
+  .object({
+    builder: z.literal("nixpacks"),
+    command: z.string().optional(),
+    watch_patterns: z.array(z.string()).optional(),
+    metal: z.boolean().optional().describe("Enable Metal build environment."),
+  })
+  .strict();
+
+const DockerfileBuildSchema = z
+  .object({
+    builder: z.literal("dockerfile"),
+    dockerfile_path: z.string().optional(),
+    watch_patterns: z.array(z.string()).optional(),
+    metal: z.boolean().optional().describe("Enable Metal build environment."),
+  })
+  .strict();
+
+const BuildConfigSchema = z
+  .union([RailpackBuildSchema, NixpacksBuildSchema, DockerfileBuildSchema])
+  .describe(
+    "Build configuration. Fields depend on builder: command for railpack/nixpacks, dockerfile_path for dockerfile.",
+  );
+
+// --- Volume ---
 
 const ServiceVolumeRefSchema = z
   .object({
@@ -23,19 +114,24 @@ const ServiceVolumeRefSchema = z
       .string()
       .describe("Mount path inside the container (must be absolute, e.g., '/data')."),
   })
+  .strict()
   .describe("Volume reference — links to a top-level volume definition.");
 
-const VolumeConfigFieldsSchema = z.object({
-  size_mb: z.number().int().positive().optional().describe("Volume size in MB."),
-  region: z.string().optional().describe("Volume region (defaults to service region)."),
-});
+const VolumeConfigFieldsSchema = z
+  .object({
+    size_mb: z.number().int().positive().optional().describe("Volume size in MB."),
+    region: z.string().optional().describe("Volume region (defaults to service region)."),
+  })
+  .strict();
 
 const VolumeEntrySchema = VolumeConfigFieldsSchema.extend({
   environments: z
     .record(z.string(), VolumeConfigFieldsSchema)
     .optional()
     .describe("Per-environment volume overrides."),
-}).describe("Top-level volume configuration.");
+})
+  .strict()
+  .describe("Top-level volume configuration.");
 
 const HealthcheckConfigSchema = z
   .object({
@@ -46,51 +142,63 @@ const HealthcheckConfigSchema = z
       .optional()
       .describe("Healthcheck timeout in seconds (default: 300)."),
   })
+  .strict()
   .describe("HTTP healthcheck configuration.");
 
-const RegionConfigSchema = z
-  .object({
-    region: z.string().min(1).describe("Railway region identifier."),
-    num_replicas: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Number of replicas in this region (default: 1)."),
-  })
-  .describe("Deployment region configuration.");
+// --- Regions ---
+// String shorthand: "us-west1" (1 replica)
+// Map form: { "us-west1": 2, "us-east4": 1 } (multi-region with replica counts)
 
-const RegistryCredentialsSchema = z
-  .object({
-    username: z.string().describe("Registry username. Supports ${ENV_VAR} syntax."),
-    password: z.string().describe("Registry password. Supports ${ENV_VAR} syntax."),
-  })
-  .describe("Registry credentials for private container images.");
+const RegionsConfigSchema = z
+  .union([
+    z.string().min(1).describe("Single region identifier (1 replica)."),
+    z
+      .record(z.string(), z.number().int().positive())
+      .describe("Map of region identifier to replica count (multi-region support)."),
+  ])
+  .describe(
+    "Deployment region(s). String for single region, map for multi-region with replica counts.",
+  );
 
 const DomainSchema = z.string();
 
 const DomainEntrySchema = z.union([
   DomainSchema,
-  z.object({
-    domain: DomainSchema,
-    target_port: z.number().int().positive().optional().describe("Target port for the domain."),
-  }),
+  z
+    .object({
+      domain: DomainSchema,
+      target_port: z.number().int().positive().optional().describe("Target port for the domain."),
+    })
+    .strict(),
 ]);
 
 const RailwayDomainSchema = z
+  .object({
+    target_port: z
+      .number()
+      .int()
+      .positive()
+      .describe("Target port for the Railway-provided domain."),
+  })
+  .strict()
+  .optional()
+  .describe("Enable a Railway-provided domain (.up.railway.app). Specify target_port.");
+
+// --- Restart policy ---
+
+const RestartPolicySchema = z
   .union([
-    z.boolean(),
-    z.object({
-      target_port: z
-        .number()
-        .int()
-        .positive()
-        .describe("Target port for the Railway-provided domain."),
-    }),
+    z.enum(["always", "never", "on_failure"]),
+    z
+      .object({
+        type: z.literal("on_failure"),
+        max_retries: z.number().int().nonnegative(),
+      })
+      .strict(),
   ])
   .optional()
   .describe(
-    "Enable a Railway-provided domain (.up.railway.app). Set to true or specify target_port.",
+    "Restart policy: always, never, or on_failure. Object form with max_retries only for on_failure.",
   );
 
 const LimitsConfigSchema = z
@@ -98,38 +206,34 @@ const LimitsConfigSchema = z
     memory_gb: z.number().positive().optional().describe("Memory limit in GB."),
     vcpus: z.number().positive().optional().describe("vCPU limit."),
   })
+  .strict()
   .optional()
   .describe("Resource limits for the service.");
 
-const ParamDefSchema = z.object({
-  required: z
-    .boolean()
-    .optional()
-    .describe("Whether this parameter must be provided by the environment config."),
-  default: z
-    .string()
-    .optional()
-    .describe("Default value if not provided by the environment config."),
-});
-
 // --- Bucket ---
 
-const BucketConfigFieldsSchema = z.object({
-  region: z.string().optional().describe("Bucket region (e.g., 'iad')."),
-});
+const BucketConfigFieldsSchema = z
+  .object({
+    region: z.string().optional().describe("Bucket region (e.g., 'iad')."),
+  })
+  .strict();
 
 const BucketEntrySchema = BucketConfigFieldsSchema.extend({
   environments: z
     .record(z.string(), BucketConfigFieldsSchema)
     .optional()
     .describe("Per-environment bucket overrides."),
-}).describe("S3-compatible bucket configuration.");
+})
+  .strict()
+  .describe("S3-compatible bucket configuration.");
 
 // --- Shared variables ---
 
-const SharedVariableValueSchema = z.object({
-  value: z.string().describe("Variable value. Supports ${ENV_VAR} syntax."),
-});
+const SharedVariableValueSchema = z
+  .object({
+    value: z.string().describe("Variable value. Supports ${ENV_VAR} syntax."),
+  })
+  .strict();
 
 const SharedVariableEntrySchema = z
   .union([
@@ -145,21 +249,6 @@ const SharedVariableEntrySchema = z
     "Shared variable — either a plain string (same everywhere) or object with value + per-env overrides.",
   );
 
-// --- Auto-updates ---
-
-const AutoUpdateScheduleSchema = z.object({
-  day: z.number().int().min(0).max(6).describe("Day of week (0=Sunday, 6=Saturday)."),
-  start_hour: z.number().int().min(0).max(24).describe("Start hour (0-24)."),
-  end_hour: z.number().int().min(0).max(24).describe("End hour (0-24)."),
-});
-
-const AutoUpdateConfigSchema = z
-  .object({
-    type: z.string().describe("Update type (e.g., 'patch')."),
-    schedule: z.array(AutoUpdateScheduleSchema).describe("Update schedule entries."),
-  })
-  .describe("Auto-update configuration for image-based services.");
-
 // --- Service ---
 
 /** Shared service fields — common to templates, service entries, and overrides. */
@@ -167,6 +256,7 @@ const ServiceFieldsSchema = z.object({
   source: SourceConfigSchema.optional().describe(
     "Service source — specify either 'image' or 'repo', not both.",
   ),
+  build: BuildConfigSchema.optional().describe("Build configuration."),
   variables: z
     .record(z.string(), z.string().nullable())
     .optional()
@@ -177,28 +267,14 @@ const ServiceFieldsSchema = z.object({
   volume: ServiceVolumeRefSchema.optional().describe(
     "Volume reference — name must match a top-level volume key.",
   ),
-  region: RegionConfigSchema.optional().describe("Deployment region."),
-  restart_policy: z
-    .union([
-      z.string(),
-      z.object({ type: z.string(), max_retries: z.number().int().nonnegative().optional() }),
-    ])
-    .optional()
-    .describe(
-      "Restart policy: ALWAYS, NEVER, or ON_FAILURE. Can be a string or object with type and max_retries.",
-    ),
+  regions: RegionsConfigSchema.optional().describe("Deployment region(s)."),
+  restart_policy: RestartPolicySchema,
   healthcheck: HealthcheckConfigSchema.optional().describe("HTTP healthcheck configuration."),
   cron_schedule: z
     .string()
     .optional()
     .describe("Cron schedule (5-field format, e.g., '*/5 * * * *')."),
   start_command: z.string().optional().describe("Custom start command for the service."),
-  build_command: z.string().optional().describe("Custom build command (Nixpacks/Heroku builds)."),
-  root_directory: z
-    .string()
-    .optional()
-    .describe("Root directory for the service (monorepo support)."),
-  dockerfile_path: z.string().optional().describe("Path to a custom Dockerfile."),
   pre_deploy_command: z
     .union([z.string(), z.array(z.string())])
     .optional()
@@ -207,11 +283,6 @@ const ServiceFieldsSchema = z.object({
     .boolean()
     .optional()
     .describe("Enable serverless mode. Containers scale to zero when idle."),
-  builder: z.string().optional().describe("Builder: RAILPACK, NIXPACKS, HEROKU, or PAKETO."),
-  watch_patterns: z
-    .array(z.string())
-    .optional()
-    .describe("Gitignore-style patterns to trigger deploys based on changed file paths."),
   draining_seconds: z
     .number()
     .int()
@@ -227,22 +298,8 @@ const ServiceFieldsSchema = z.object({
       "Time in seconds the old deployment overlaps with the new one during blue-green deploys.",
     ),
   ipv6_egress: z.boolean().optional().describe("Enable IPv6 outbound traffic for the service."),
-  branch: z
-    .string()
-    .optional()
-    .describe("GitHub branch to deploy from. Changes are auto-deployed from this branch."),
-  wait_for_ci: z
-    .boolean()
-    .optional()
-    .describe("Wait for CI check suites (GitHub Actions) to complete before deploying."),
-  registry_credentials: RegistryCredentialsSchema.optional().describe(
-    "Registry credentials for private container images.",
-  ),
   railway_domain: RailwayDomainSchema,
-  tcp_proxies: z
-    .array(z.number().int().positive())
-    .optional()
-    .describe("Multiple TCP proxy application ports."),
+  tcp_proxy: z.number().int().positive().optional().describe("TCP proxy application port."),
   limits: LimitsConfigSchema,
   railway_config_file: z
     .string()
@@ -256,11 +313,17 @@ const ServiceFieldsSchema = z.object({
     .string()
     .optional()
     .describe("Private network DNS hostname (e.g., 'postgres', 'redis')."),
-  auto_updates: AutoUpdateConfigSchema.optional().describe(
-    "Auto-update configuration for image-based services.",
-  ),
-  metal: z.boolean().optional().describe("Enable Metal build environment (V3)."),
 });
+
+const ParamDefSchema = z
+  .object({
+    required: z
+      .boolean()
+      .optional()
+      .describe("Whether this parameter must be provided by the service config."),
+    default: z.string().optional().describe("Default value if not provided."),
+  })
+  .strict();
 
 export const ServiceTemplateSchema = ServiceFieldsSchema.extend({
   params: z
@@ -325,8 +388,18 @@ export const ProjectConfigSchema = z
   .strict()
   .describe("Declarative project configuration for Railway Deploy.");
 
-/** Inferred type from the ProjectConfig Zod schema. */
+// --- Inferred types (derived from Zod schemas — single source of truth) ---
+
 export type ParsedProjectConfig = z.infer<typeof ProjectConfigSchema>;
+export type ServiceFields = z.infer<typeof ServiceFieldsSchema>;
+export type ServiceTemplate = z.infer<typeof ServiceTemplateSchema>;
+export type ServiceEntry = z.infer<typeof ServiceEntrySchema>;
+export type ServiceEnvironmentOverride = z.infer<typeof ServiceEnvironmentOverrideSchema>;
+export type ProjectServiceEntry = z.infer<typeof ProjectServiceEntrySchema>;
+export type DomainEntry = z.infer<typeof DomainEntrySchema>;
+export type SharedVariableEntry = z.infer<typeof SharedVariableEntrySchema>;
+export type AutoUpdateConfig = z.infer<typeof AutoUpdateConfigSchema>;
+export type ParamDef = z.infer<typeof ParamDefSchema>;
 
 /**
  * Validate and parse a project config object against the structural schema.
@@ -370,40 +443,22 @@ export function validateServiceTemplate(
   return result.data;
 }
 
-// --- Value validation (run after param expansion on resolved ServiceState) ---
+// --- Value validation (run on resolved ServiceState after param/env expansion) ---
+// builder and restart_policy are validated by the schema's enums before this runs.
+// This validates values that can only be checked after %{param} and ${ENV_VAR} expansion.
 
-const VALID_RESTART_POLICIES = ["ALWAYS", "NEVER", "ON_FAILURE"];
-const VALID_BUILDERS = ["RAILPACK", "NIXPACKS", "HEROKU", "PAKETO"];
 const CRON_FIELD_PATTERN = /^(\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)(\/[0-9]+)?$/;
 const DOMAIN_PATTERN = /^(\*\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-/**
- * Validate resolved service values after param and env var expansion.
- * Throws on invalid values with clear error messages.
- */
 export function validateResolvedService(
   name: string,
   service: {
-    restartPolicy?: string;
-    builder?: string;
     cronSchedule?: string;
     volume?: { mount: string };
     domains: Array<{ domain: string }>;
   },
 ): void {
   const errors: string[] = [];
-
-  if (service.restartPolicy && !VALID_RESTART_POLICIES.includes(service.restartPolicy)) {
-    errors.push(
-      `restart_policy: "${service.restartPolicy}" is not valid (must be ${VALID_RESTART_POLICIES.join(", ")})`,
-    );
-  }
-
-  if (service.builder && !VALID_BUILDERS.includes(service.builder)) {
-    errors.push(
-      `builder: "${service.builder}" is not valid (must be ${VALID_BUILDERS.join(", ")})`,
-    );
-  }
 
   if (service.cronSchedule) {
     const parts = service.cronSchedule.trim().split(/\s+/);
@@ -419,7 +474,6 @@ export function validateResolvedService(
   }
 
   for (const d of service.domains) {
-    // Skip validation for Railway references and env vars
     if (d.domain.includes("${{") || d.domain.includes("${")) continue;
     if (!DOMAIN_PATTERN.test(d.domain)) {
       errors.push(`domain: "${d.domain}" is not a valid domain format`);

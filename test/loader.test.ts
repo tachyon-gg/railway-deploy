@@ -50,8 +50,9 @@ variables:
   ROLE: worker
 
 start_command: "npm run worker"
-build_command: "npm run build"
-root_directory: "/packages/worker"
+build:
+  builder: railpack
+  command: "npm run build"
 `,
   );
 
@@ -171,9 +172,8 @@ services:
   web:
     source:
       image: nginx:latest
-    region:
-      region: us-west-2
-      num_replicas: 3
+    regions:
+      us-west-2: 3
 `,
   );
 
@@ -207,10 +207,11 @@ services:
   web:
     source:
       image: nginx:latest
-    builder: NIXPACKS
-    watch_patterns:
-      - "src/**"
-      - "package.json"
+    build:
+      builder: nixpacks
+      watch_patterns:
+        - "src/**"
+        - "package.json"
     draining_seconds: 30
     overlap_seconds: 10
     ipv6_egress: true
@@ -229,11 +230,11 @@ services:
   web:
     source:
       repo: github.com/org/app
-    branch: develop
+      branch: develop
 `,
   );
 
-  // Write an environment file with railway_domain: true
+  // Write an environment file with railway_domain object (no target_port specified)
   writeFileSync(
     join(ENVS_DIR, "railway-domain-bool.yaml"),
     `
@@ -245,7 +246,8 @@ services:
   web:
     source:
       image: nginx:latest
-    railway_domain: true
+    railway_domain:
+      target_port: 3000
 `,
   );
 
@@ -266,7 +268,7 @@ services:
 `,
   );
 
-  // Write an environment file with tcp_proxies (single port)
+  // Write an environment file with tcp_proxy
   writeFileSync(
     join(ENVS_DIR, "tcp-proxy-single.yaml"),
     `
@@ -278,26 +280,7 @@ services:
   db:
     source:
       image: postgres:16
-    tcp_proxies:
-      - 5432
-`,
-  );
-
-  // Write an environment file with tcp_proxies (plural)
-  writeFileSync(
-    join(ENVS_DIR, "tcp-proxies-multi.yaml"),
-    `
-project: Test Project
-environments:
-  - alpha
-
-services:
-  db:
-    source:
-      image: postgres:16
-    tcp_proxies:
-      - 5432
-      - 6379
+    tcp_proxy: 5432
 `,
   );
 
@@ -457,7 +440,6 @@ describe("loadProjectConfig", () => {
 
     expect(worker.startCommand).toBe("npm run worker");
     expect(worker.buildCommand).toBe("npm run build");
-    expect(worker.rootDirectory).toBe("/packages/worker");
     expect(worker.serverless).toBe(true);
     expect(worker.preDeployCommand).toEqual(["npm run migrate"]);
   });
@@ -467,7 +449,10 @@ describe("loadProjectConfig", () => {
       join(SERVICES_DIR, "all-fields.yaml"),
       `
 source:
-  image: template-image:latest
+  repo: github.com/org/template-app
+  branch: template-branch
+  root_directory: /template-root
+  wait_for_ci: false
 variables:
   TEMPLATE_VAR: template
 domains:
@@ -475,33 +460,29 @@ domains:
 volume:
   mount: /template-data
   name: template-vol
-region:
-  region: us-west-1
-  num_replicas: 1
+regions:
+  us-west-1: 1
 restart_policy:
-  type: ON_FAILURE
+  type: on_failure
   max_retries: 3
 healthcheck:
   path: /template-health
   timeout: 100
 cron_schedule: "0 * * * *"
 start_command: template-start
-build_command: template-build
-root_directory: /template-root
-dockerfile_path: Dockerfile.template
+build:
+  builder: dockerfile
+  dockerfile_path: Dockerfile.template
+  watch_patterns:
+    - "template/**"
 pre_deploy_command: template-predeploy
 serverless: false
-builder: NIXPACKS
-watch_patterns:
-  - "template/**"
 draining_seconds: 10
 overlap_seconds: 5
 ipv6_egress: false
-branch: template-branch
-wait_for_ci: false
-railway_domain: true
-tcp_proxies:
-  - 3000
+railway_domain:
+  target_port: 3000
+tcp_proxy: 3000
 limits:
   memory_gb: 2
   vcpus: 1
@@ -518,7 +499,10 @@ services:
   web:
     template: ../services/all-fields.yaml
     source:
-      image: entry-image:v2
+      repo: github.com/org/entry-app
+      branch: entry-branch
+      root_directory: /entry-root
+      wait_for_ci: true
     variables:
       ENTRY_VAR: entry
     domains:
@@ -526,37 +510,29 @@ services:
     volume:
       mount: /entry-data
       name: entry-vol
-    region:
-      region: eu-west-1
-      num_replicas: 3
-    restart_policy:
-      type: ALWAYS
-      max_retries: 10
+    regions:
+      eu-west-1: 3
+    restart_policy: always
     healthcheck:
       path: /entry-health
       timeout: 200
     cron_schedule: "*/5 * * * *"
     start_command: entry-start
-    build_command: entry-build
-    root_directory: /entry-root
-    dockerfile_path: Dockerfile.entry
+    build:
+      builder: railpack
+      command: entry-build
+      watch_patterns:
+        - "entry/**"
     pre_deploy_command:
       - entry-predeploy-1
       - entry-predeploy-2
     serverless: true
-    builder: RAILPACK
-    watch_patterns:
-      - "entry/**"
     draining_seconds: 30
     overlap_seconds: 15
     ipv6_egress: true
-    branch: entry-branch
-    wait_for_ci: true
     railway_domain:
       target_port: 8080
-    tcp_proxies:
-      - 5432
-      - 6379
+    tcp_proxy: 5432
     limits:
       memory_gb: 8
       vcpus: 4
@@ -569,23 +545,23 @@ services:
     const web = result.state.services.web;
 
     // Every field should use the entry value, not the template value
-    expect(web.source).toEqual({ image: "entry-image:v2" });
+    expect(web.source).toEqual({ repo: "github.com/org/entry-app" });
     // Variables merge (entry adds to template)
     expect(web.variables.TEMPLATE_VAR).toBe("template");
     expect(web.variables.ENTRY_VAR).toBe("entry");
     // Domains replace entirely
     expect(web.domains).toEqual([{ domain: "entry.example.com" }]);
     expect(web.volume).toEqual({ mount: "/entry-data", name: "entry-vol" });
-    expect(web.region).toEqual({ region: "eu-west-1", numReplicas: 3 });
+    expect(web.regions).toEqual({ "eu-west-1": 3 });
     expect(web.restartPolicy).toBe("ALWAYS");
     expect(web.healthcheck).toEqual({ path: "/entry-health", timeout: 200 });
     expect(web.cronSchedule).toBe("*/5 * * * *");
     expect(web.startCommand).toBe("entry-start");
     expect(web.buildCommand).toBe("entry-build");
     expect(web.rootDirectory).toBe("/entry-root");
-    expect(web.dockerfilePath).toBe("Dockerfile.entry");
+    expect(web.dockerfilePath).toBeUndefined();
     expect(web.preDeployCommand).toEqual(["entry-predeploy-1", "entry-predeploy-2"]);
-    expect(web.restartPolicyMaxRetries).toBe(10);
+    expect(web.restartPolicyMaxRetries).toBeUndefined();
     expect(web.serverless).toBe(true);
     expect(web.builder).toBe("RAILPACK");
     expect(web.watchPatterns).toEqual(["entry/**"]);
@@ -595,7 +571,7 @@ services:
     expect(web.branch).toBe("entry-branch");
     expect(web.waitForCi).toBe(true);
     expect(web.railwayDomain).toEqual({ targetPort: 8080 });
-    expect(web.tcpProxies).toEqual([5432, 6379]);
+    expect(web.tcpProxy).toBe(5432);
     expect(web.limits).toEqual({ memoryGB: 8, vCPUs: 4 });
     expect(web.railwayConfigFile).toBe("entry.toml");
     expect(web.staticOutboundIps).toBe(true);
@@ -681,14 +657,11 @@ services:
     );
   });
 
-  test("loads region with num_replicas", () => {
+  test("loads regions map", () => {
     const result = loadProjectConfig(join(ENVS_DIR, "region.yaml"), "alpha");
     const web = result.state.services.web;
 
-    expect(web.region).toEqual({
-      region: "us-west-2",
-      numReplicas: 3,
-    });
+    expect(web.regions).toEqual({ "us-west-2": 3 });
   });
 
   test("loads healthcheck with timeout", () => {
@@ -762,11 +735,11 @@ services:
     expect(web.branch).toBe("develop");
   });
 
-  test("loads railway_domain: true as railwayDomain: {}", () => {
+  test("loads railway_domain object as railwayDomain with targetPort", () => {
     const result = loadProjectConfig(join(ENVS_DIR, "railway-domain-bool.yaml"), "alpha");
     const web = result.state.services.web;
 
-    expect(web.railwayDomain).toEqual({});
+    expect(web.railwayDomain).toEqual({ targetPort: 3000 });
   });
 
   test("loads railway_domain object with target_port as railwayDomain with targetPort", () => {
@@ -776,18 +749,11 @@ services:
     expect(web.railwayDomain).toEqual({ targetPort: 8080 });
   });
 
-  test("loads tcp_proxies (single port) into tcpProxies array", () => {
+  test("loads tcp_proxy into tcpProxy", () => {
     const result = loadProjectConfig(join(ENVS_DIR, "tcp-proxy-single.yaml"), "alpha");
     const db = result.state.services.db;
 
-    expect(db.tcpProxies).toEqual([5432]);
-  });
-
-  test("loads tcp_proxies (plural) into tcpProxies array", () => {
-    const result = loadProjectConfig(join(ENVS_DIR, "tcp-proxies-multi.yaml"), "alpha");
-    const db = result.state.services.db;
-
-    expect(db.tcpProxies).toEqual([5432, 6379]);
+    expect(db.tcpProxy).toBe(5432);
   });
 
   test("loads limits with memory_gb and vcpus", () => {
@@ -918,18 +884,12 @@ services:
 params:
   schedule:
     required: true
-  policy:
-    required: true
-  build:
-    required: true
   mount:
     required: true
 
 source:
   image: nginx:latest
 cron_schedule: "%{schedule}"
-restart_policy: "%{policy}"
-builder: "%{build}"
 volume:
   mount: "%{mount}"
   name: data
@@ -946,8 +906,6 @@ services:
     template: ../services/param-validated.yaml
     params:
       schedule: "*/5 * * * *"
-      policy: ON_FAILURE
-      build: NIXPACKS
       mount: /data
 `,
     );
@@ -955,32 +913,7 @@ services:
     const result = loadProjectConfig(join(ENVS_DIR, "param-validated.yaml"), "alpha");
     const svc = result.state.services.worker;
     expect(svc.cronSchedule).toBe("*/5 * * * *");
-    expect(svc.restartPolicy).toBe("ON_FAILURE");
-    expect(svc.builder).toBe("NIXPACKS");
     expect(svc.volume?.mount).toBe("/data");
-  });
-
-  test("throws on invalid builder after param expansion", () => {
-    writeFileSync(
-      join(ENVS_DIR, "bad-builder-param.yaml"),
-      `
-project: Test
-environments:
-  - alpha
-services:
-  web:
-    template: ../services/param-validated.yaml
-    params:
-      schedule: "*/5 * * * *"
-      policy: ON_FAILURE
-      build: INVALID_BUILDER
-      mount: /data
-`,
-    );
-
-    expect(() => loadProjectConfig(join(ENVS_DIR, "bad-builder-param.yaml"), "alpha")).toThrow(
-      "builder",
-    );
   });
 
   test("throws on invalid volume mount after param expansion", () => {
@@ -1029,25 +962,22 @@ services:
     );
   });
 
-  test("throws on invalid restart_policy after param expansion", () => {
+  test("schema rejects invalid restart_policy enum value", () => {
     writeFileSync(
-      join(ENVS_DIR, "bad-policy-param.yaml"),
+      join(ENVS_DIR, "bad-policy.yaml"),
       `
 project: Test
 environments:
   - alpha
 services:
   web:
-    template: ../services/param-validated.yaml
-    params:
-      schedule: "*/5 * * * *"
-      policy: SOMETIMES
-      build: NIXPACKS
-      mount: /data
+    source:
+      image: nginx:latest
+    restart_policy: sometimes
 `,
     );
 
-    expect(() => loadProjectConfig(join(ENVS_DIR, "bad-policy-param.yaml"), "alpha")).toThrow(
+    expect(() => loadProjectConfig(join(ENVS_DIR, "bad-policy.yaml"), "alpha")).toThrow(
       "restart_policy",
     );
   });
@@ -1354,15 +1284,15 @@ services:
       const defaults = {
         source: { image: "nginx:latest" },
         start_command: "npm start",
-        builder: "NIXPACKS" as const,
+        build: { builder: "NIXPACKS" },
       };
 
       const result = mergeServiceEntry(defaults, {
         start_command: "bun run start",
-        builder: "HEROKU",
+        build: { builder: "HEROKU" },
       });
       expect(result.start_command).toBe("bun run start");
-      expect(result.builder).toBe("HEROKU");
+      expect(result.build?.builder).toBe("HEROKU");
       // source unchanged
       expect(result.source).toEqual({ image: "nginx:latest" });
     });
@@ -1496,9 +1426,9 @@ services:
   web:
     source:
       image: ghcr.io/org/app:latest
-    registry_credentials:
-      username: myuser
-      password: mypass
+      registry_credentials:
+        username: myuser
+        password: mypass
 `,
     );
 
@@ -1509,7 +1439,7 @@ services:
     });
   });
 
-  test("resolves autoUpdates with schedule", () => {
+  test("resolves autoUpdates with day-named schedule", () => {
     writeFileSync(
       join(ENVS_DIR, "auto-updates.yaml"),
       `
@@ -1520,13 +1450,11 @@ services:
   web:
     source:
       image: nginx:latest
-    auto_updates:
-      type: digest
-      schedule:
-        - day: 1
+      auto_updates:
+        monday:
           start_hour: 0
           end_hour: 6
-        - day: 3
+        wednesday:
           start_hour: 12
           end_hour: 18
 `,
@@ -1534,7 +1462,7 @@ services:
 
     const result = loadProjectConfig(join(ENVS_DIR, "auto-updates.yaml"), "alpha");
     expect(result.state.services.web.autoUpdates).toEqual({
-      type: "digest",
+      type: "patch",
       schedule: [
         { day: 1, startHour: 0, endHour: 6 },
         { day: 3, startHour: 12, endHour: 18 },
@@ -1561,6 +1489,25 @@ services:
     expect(result.state.services.web.privateHostname).toBe("web.internal");
   });
 
+  test("resolves private_hostname empty string for removal", () => {
+    writeFileSync(
+      join(ENVS_DIR, "private-endpoint-remove.yaml"),
+      `
+project: Test
+environments:
+  - alpha
+services:
+  web:
+    source:
+      image: nginx:latest
+    private_hostname: ""
+`,
+    );
+
+    const result = loadProjectConfig(join(ENVS_DIR, "private-endpoint-remove.yaml"), "alpha");
+    expect(result.state.services.web.privateHostname).toBe("");
+  });
+
   test("resolves metal", () => {
     writeFileSync(
       join(ENVS_DIR, "build-env.yaml"),
@@ -1572,7 +1519,9 @@ services:
   web:
     source:
       image: nginx:latest
-    metal: true
+    build:
+      builder: railpack
+      metal: true
 `,
     );
 
