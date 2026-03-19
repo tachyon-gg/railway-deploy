@@ -4,212 +4,277 @@
   "properties": {
     "source": {
       "description": "Service source — specify either 'image' or 'repo', not both.",
-      "type": "object",
-      "properties": {
-        "image": {
-          "description": "Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1').",
-          "type": "string"
-        },
-        "repo": {
-          "description": "GitHub repository URL.",
-          "type": "string"
-        },
-        "branch": {
-          "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
-          "type": "string"
-        },
-        "root_directory": {
-          "description": "Root directory for the service (monorepo support).",
-          "type": "string"
-        },
-        "wait_for_ci": {
-          "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
-          "type": "boolean"
-        },
-        "registry_credentials": {
-          "description": "Registry credentials for private container images.",
+      "anyOf": [
+        {
           "type": "object",
           "properties": {
-            "username": {
+            "repo": {
               "type": "string",
-              "description": "Registry username. Supports ${ENV_VAR} syntax."
+              "description": "GitHub repository URL."
             },
-            "password": {
-              "type": "string",
-              "description": "Registry password. Supports ${ENV_VAR} syntax."
+            "branch": {
+              "description": "GitHub branch to deploy from. Changes are auto-deployed from this branch.",
+              "type": "string"
+            },
+            "root_directory": {
+              "description": "Root directory for the service (monorepo support).",
+              "type": "string"
+            },
+            "wait_for_ci": {
+              "description": "Wait for CI check suites (GitHub Actions) to complete before deploying.",
+              "type": "boolean"
             }
           },
-          "required": ["username", "password"],
-          "additionalProperties": false
+          "required": ["repo"],
+          "additionalProperties": false,
+          "description": "Repository source — deploy from a GitHub repo."
         },
-        "auto_updates": {
-          "description": "Auto-update configuration for image-based services.",
+        {
           "type": "object",
           "properties": {
-            "sunday": {
+            "image": {
+              "type": "string",
+              "description": "Container image (e.g., 'nginx:latest', 'ghcr.io/org/app:v1')."
+            },
+            "registry_credentials": {
+              "description": "Registry credentials for private container images.",
               "type": "object",
               "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
+                "username": {
+                  "type": "string",
+                  "description": "Registry username. Supports ${ENV_VAR} syntax."
                 },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
+                "password": {
+                  "type": "string",
+                  "description": "Registry password. Supports ${ENV_VAR} syntax."
                 }
               },
-              "required": ["start_hour", "end_hour"],
+              "required": ["username", "password"],
               "additionalProperties": false
             },
-            "monday": {
+            "auto_updates": {
+              "description": "Auto-update schedule for image-based services.",
               "type": "object",
               "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
+                "sunday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
                 },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
+                "monday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "tuesday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "wednesday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "thursday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "friday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
+                },
+                "saturday": {
+                  "type": "object",
+                  "properties": {
+                    "start_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "Start hour (0-24)."
+                    },
+                    "end_hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 24,
+                      "description": "End hour (0-24)."
+                    }
+                  },
+                  "required": ["start_hour", "end_hour"],
+                  "additionalProperties": false
                 }
               },
-              "required": ["start_hour", "end_hour"],
-              "additionalProperties": false
-            },
-            "tuesday": {
-              "type": "object",
-              "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
-                },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
-                }
-              },
-              "required": ["start_hour", "end_hour"],
-              "additionalProperties": false
-            },
-            "wednesday": {
-              "type": "object",
-              "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
-                },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
-                }
-              },
-              "required": ["start_hour", "end_hour"],
-              "additionalProperties": false
-            },
-            "thursday": {
-              "type": "object",
-              "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
-                },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
-                }
-              },
-              "required": ["start_hour", "end_hour"],
-              "additionalProperties": false
-            },
-            "friday": {
-              "type": "object",
-              "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
-                },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
-                }
-              },
-              "required": ["start_hour", "end_hour"],
-              "additionalProperties": false
-            },
-            "saturday": {
-              "type": "object",
-              "properties": {
-                "start_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "Start hour (0-24)."
-                },
-                "end_hour": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 24,
-                  "description": "End hour (0-24)."
-                }
-              },
-              "required": ["start_hour", "end_hour"],
               "additionalProperties": false
             }
           },
-          "additionalProperties": false
+          "required": ["image"],
+          "additionalProperties": false,
+          "description": "Image source — deploy from a container image."
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "build": {
       "description": "Build configuration.",
-      "type": "object",
-      "properties": {
-        "builder": {
-          "description": "Builder: railpack (default), nixpacks, or dockerfile.",
-          "type": "string"
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "builder": {
+              "type": "string",
+              "const": "railpack"
+            },
+            "command": {
+              "type": "string"
+            },
+            "watch_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "metal": {
+              "description": "Enable Metal build environment.",
+              "type": "boolean"
+            }
+          },
+          "required": ["builder"],
+          "additionalProperties": false
         },
-        "command": {
-          "description": "Custom build command (Nixpacks/Heroku builds).",
-          "type": "string"
+        {
+          "type": "object",
+          "properties": {
+            "builder": {
+              "type": "string",
+              "const": "nixpacks"
+            },
+            "command": {
+              "type": "string"
+            },
+            "watch_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "metal": {
+              "description": "Enable Metal build environment.",
+              "type": "boolean"
+            }
+          },
+          "required": ["builder"],
+          "additionalProperties": false
         },
-        "dockerfile_path": {
-          "description": "Path to a custom Dockerfile.",
-          "type": "string"
-        },
-        "watch_patterns": {
-          "description": "Gitignore-style patterns to trigger deploys based on changed file paths.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        {
+          "type": "object",
+          "properties": {
+            "builder": {
+              "type": "string",
+              "const": "dockerfile"
+            },
+            "dockerfile_path": {
+              "type": "string"
+            },
+            "watch_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "metal": {
+              "description": "Enable Metal build environment.",
+              "type": "boolean"
+            }
+          },
+          "required": ["builder"],
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "variables": {
       "description": "Service-level variables. Set to null to delete. Supports ${ENV_VAR} and ${{service.VAR}} syntax.",
@@ -295,16 +360,18 @@
       ]
     },
     "restart_policy": {
-      "description": "Restart policy: always, never, or on_failure. Can be a string or object with type and max_retries.",
+      "description": "Restart policy: always, never, or on_failure. Object form with max_retries only for on_failure.",
       "anyOf": [
         {
-          "type": "string"
+          "type": "string",
+          "enum": ["always", "never", "on_failure"]
         },
         {
           "type": "object",
           "properties": {
             "type": {
-              "type": "string"
+              "type": "string",
+              "const": "on_failure"
             },
             "max_retries": {
               "type": "integer",
@@ -312,7 +379,7 @@
               "maximum": 9007199254740991
             }
           },
-          "required": ["type"],
+          "required": ["type", "max_retries"],
           "additionalProperties": false
         }
       ]
@@ -426,10 +493,6 @@
       "description": "Private network DNS hostname (e.g., 'postgres', 'redis').",
       "type": "string"
     },
-    "metal": {
-      "description": "Enable Metal build environment (V3).",
-      "type": "boolean"
-    },
     "params": {
       "description": "Parameter definitions. Each param can be required or have a default value.",
       "type": "object",
@@ -440,11 +503,11 @@
         "type": "object",
         "properties": {
           "required": {
-            "description": "Whether this parameter must be provided by the environment config.",
+            "description": "Whether this parameter must be provided by the service config.",
             "type": "boolean"
           },
           "default": {
-            "description": "Default value if not provided by the environment config.",
+            "description": "Default value if not provided.",
             "type": "string"
           }
         },

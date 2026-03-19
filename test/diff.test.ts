@@ -1314,4 +1314,584 @@ describe("computeConfigDiff", () => {
     const entry = diff.entries.find((e) => e.path === "build.builder");
     expect(entry).toBeUndefined();
   });
+
+  // --- Service deletion with volumes → data loss ---
+
+  test("flags data loss when deleting service with volumes attached", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      services: {
+        "svc-1": { volumeMounts: { "vol-1": { mountPath: "/data" } } },
+      },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "db"]]),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToDelete).toHaveLength(1);
+    expect(diff.hasDataLoss).toBe(true);
+    expect(diff.dataLossEntries).toHaveLength(1);
+    expect(diff.dataLossEntries[0].path).toBe("service");
+    expect(diff.dataLossEntries[0].action).toBe("remove");
+    expect(diff.dataLossEntries[0].serviceName).toBe("db");
+  });
+
+  test("no data loss when deleting service without volumes", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      services: { "svc-1": {} },
+    };
+    const ctx = makeCtx({
+      serviceIdToName: new Map([["svc-1", "worker"]]),
+    });
+    const diff = computeConfigDiff(desired, current, ctx);
+    expect(diff.servicesToDelete).toHaveLength(1);
+    expect(diff.hasDataLoss).toBe(false);
+    expect(diff.dataLossEntries).toHaveLength(0);
+  });
+
+  // --- Static outbound IPs (egress) ---
+
+  describe("static outbound IPs (egress)", () => {
+    test("detects egress add when desired has staticOutboundIps and current does not", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: { name: "web", variables: {}, domains: [], staticOutboundIps: true },
+          },
+        }),
+        egressByService: new Map([["web", false]]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "staticOutboundIps");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.serviceName).toBe("web");
+      expect(entry?.newValue).toBe(true);
+    });
+
+    test("detects egress remove when current has egress but desired does not", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: { name: "web", variables: {}, domains: [] },
+          },
+        }),
+        egressByService: new Map([["web", true]]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "staticOutboundIps");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("remove");
+      expect(entry?.serviceName).toBe("web");
+      expect(entry?.oldValue).toBe(true);
+    });
+
+    test("no egress diff when both sides match", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: { name: "web", variables: {}, domains: [], staticOutboundIps: true },
+          },
+        }),
+        egressByService: new Map([["web", true]]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "staticOutboundIps");
+      expect(entry).toBeUndefined();
+    });
+  });
+
+  // --- Railway domains (service domains) ---
+
+  describe("railway domains (service domains)", () => {
+    test("detects railway domain add", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: {
+              name: "web",
+              variables: {},
+              domains: [],
+              railwayDomain: { targetPort: 3000 },
+            },
+          },
+        }),
+        serviceDomainByService: new Map(), // no current domain
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.category === "railway-domain");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.serviceName).toBe("web");
+      expect(entry?.newValue).toBe("port 3000");
+    });
+
+    test("detects railway domain add without target port", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: {
+              name: "web",
+              variables: {},
+              domains: [],
+              railwayDomain: {},
+            },
+          },
+        }),
+        serviceDomainByService: new Map(),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.category === "railway-domain");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.newValue).toBe("enabled");
+    });
+
+    test("detects railway domain remove", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: { name: "web", variables: {}, domains: [] },
+          },
+        }),
+        serviceDomainByService: new Map([
+          ["web", { id: "dom-1", domain: "web-prod.up.railway.app", targetPort: 3000 }],
+        ]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.category === "railway-domain");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("remove");
+      expect(entry?.oldValue).toBe("web-prod.up.railway.app");
+    });
+
+    test("detects railway domain port update", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: {
+              name: "web",
+              variables: {},
+              domains: [],
+              railwayDomain: { targetPort: 8080 },
+            },
+          },
+        }),
+        serviceDomainByService: new Map([
+          ["web", { id: "dom-1", domain: "web-prod.up.railway.app", targetPort: 3000 }],
+        ]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.category === "railway-domain");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("update");
+      expect(entry?.oldValue).toBe(3000);
+      expect(entry?.newValue).toBe(8080);
+    });
+
+    test("no railway domain diff when ports match", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: {
+            web: {
+              name: "web",
+              variables: {},
+              domains: [],
+              railwayDomain: { targetPort: 3000 },
+            },
+          },
+        }),
+        serviceDomainByService: new Map([
+          ["web", { id: "dom-1", domain: "web-prod.up.railway.app", targetPort: 3000 }],
+        ]),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.category === "railway-domain");
+      expect(entry).toBeUndefined();
+    });
+  });
+
+  // --- TCP proxies ---
+
+  describe("TCP proxies", () => {
+    test("detects TCP proxy add", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": { networking: { tcpProxies: { "5432": {} } } },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "db"]]),
+        desiredState: makeState({
+          services: { db: { name: "db", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "networking.tcpProxies.5432");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.newValue).toBe("5432");
+    });
+
+    test("detects TCP proxy remove", () => {
+      const desired: EnvironmentConfig = {
+        services: { "svc-1": {} },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": { networking: { tcpProxies: { "5432": {} } } },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "db"]]),
+        desiredState: makeState({
+          services: { db: { name: "db", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "networking.tcpProxies.5432");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("remove");
+      expect(entry?.oldValue).toBe("5432");
+    });
+
+    test("no TCP proxy diff when both sides match", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": { networking: { tcpProxies: { "5432": {} } } },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": { networking: { tcpProxies: { "5432": {} } } },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "db"]]),
+        desiredState: makeState({
+          services: { db: { name: "db", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path.startsWith("networking.tcpProxies"));
+      expect(entry).toBeUndefined();
+    });
+  });
+
+  // --- Region removal warning and key removal ---
+
+  describe("region diffing", () => {
+    test("emits remove entry when current has region not in desired", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { multiRegionConfig: { "us-west1": { numReplicas: 2 } } },
+          },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: {
+              multiRegionConfig: {
+                "us-west1": { numReplicas: 2 },
+                "us-east4": { numReplicas: 1 },
+              },
+            },
+          },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find(
+        (e) => e.path === "deploy.multiRegionConfig.us-east4" && e.action === "remove",
+      );
+      expect(entry).toBeDefined();
+      expect(entry?.oldValue).toEqual({ numReplicas: 1 });
+    });
+
+    test("warns when desired regions empty but current has regions (no remove entries)", () => {
+      // When desired has no multiRegionConfig but current does, we just warn —
+      // no remove entries are emitted because the user didn't configure regions at all
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": { deploy: {} },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { multiRegionConfig: { "us-west1": { numReplicas: 2 } } },
+          },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      // No region entries should appear — the warning is logged but no diff action taken
+      const regionEntries = diff.entries.filter((e) =>
+        e.path.startsWith("deploy.multiRegionConfig"),
+      );
+      expect(regionEntries).toHaveLength(0);
+    });
+  });
+
+  // --- Limit override ---
+
+  describe("limit override", () => {
+    test("detects limit add when desired has limits and current does not", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: { memoryMB: 512, vCPU: 1 } } },
+          },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": { deploy: {} } },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "deploy.limitOverride");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+    });
+
+    test("detects limit remove when desired clears limits with null containers", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: null } },
+          },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: { memoryMB: 512, vCPU: 1 } } },
+          },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "deploy.limitOverride");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("remove");
+    });
+
+    test("detects limit update when desired differs from current", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: { memoryMB: 1024, vCPU: 2 } } },
+          },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: { memoryMB: 512, vCPU: 1 } } },
+          },
+        },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "deploy.limitOverride");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("update");
+    });
+
+    test("no limit diff when both sides are empty (null containers vs absent)", () => {
+      const desired: EnvironmentConfig = {
+        services: {
+          "svc-1": {
+            deploy: { limitOverride: { containers: null } },
+          },
+        },
+      };
+      const current: EnvironmentConfig = {
+        services: { "svc-1": { deploy: {} } },
+      };
+      const ctx = makeCtx({
+        serviceIdToName: new Map([["svc-1", "web"]]),
+        desiredState: makeState({
+          services: { web: { name: "web", variables: {}, domains: [] } },
+        }),
+      });
+      const diff = computeConfigDiff(desired, current, ctx);
+      const entry = diff.entries.find((e) => e.path === "deploy.limitOverride");
+      expect(entry).toBeUndefined();
+    });
+  });
+
+  // --- Volume field diffing (sizeMB, region) ---
+
+  describe("volume fields (sizeMB, region)", () => {
+    test("detects volume sizeMB change", () => {
+      const desired: EnvironmentConfig = {
+        volumes: { "vol-1": { sizeMB: 2048 } },
+      };
+      const current: EnvironmentConfig = {
+        volumes: { "vol-1": { sizeMB: 1024 } },
+      };
+      const diff = computeConfigDiff(desired, current, makeCtx());
+      const entry = diff.entries.find((e) => e.path === "volumes.vol-1.sizeMB");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("update");
+      expect(entry?.oldValue).toBe(1024);
+      expect(entry?.newValue).toBe(2048);
+    });
+
+    test("detects volume sizeMB add when current has no sizeMB", () => {
+      const desired: EnvironmentConfig = {
+        volumes: { "vol-1": { sizeMB: 2048 } },
+      };
+      const current: EnvironmentConfig = {
+        volumes: { "vol-1": {} },
+      };
+      const diff = computeConfigDiff(desired, current, makeCtx());
+      const entry = diff.entries.find((e) => e.path === "volumes.vol-1.sizeMB");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.newValue).toBe(2048);
+    });
+
+    test("detects volume region change", () => {
+      const desired: EnvironmentConfig = {
+        volumes: { "vol-1": { region: "us-east4" } },
+      };
+      const current: EnvironmentConfig = {
+        volumes: { "vol-1": { region: "us-west1" } },
+      };
+      const diff = computeConfigDiff(desired, current, makeCtx());
+      const entry = diff.entries.find((e) => e.path === "volumes.vol-1.region");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("update");
+      expect(entry?.oldValue).toBe("us-west1");
+      expect(entry?.newValue).toBe("us-east4");
+    });
+
+    test("detects volume region add when current has no region", () => {
+      const desired: EnvironmentConfig = {
+        volumes: { "vol-1": { region: "us-east4" } },
+      };
+      const current: EnvironmentConfig = {
+        volumes: { "vol-1": {} },
+      };
+      const diff = computeConfigDiff(desired, current, makeCtx());
+      const entry = diff.entries.find((e) => e.path === "volumes.vol-1.region");
+      expect(entry).toBeDefined();
+      expect(entry?.action).toBe("add");
+      expect(entry?.newValue).toBe("us-east4");
+    });
+
+    test("no volume diff when fields match", () => {
+      const desired: EnvironmentConfig = {
+        volumes: { "vol-1": { sizeMB: 1024, region: "us-west1" } },
+      };
+      const current: EnvironmentConfig = {
+        volumes: { "vol-1": { sizeMB: 1024, region: "us-west1" } },
+      };
+      const diff = computeConfigDiff(desired, current, makeCtx());
+      const volEntries = diff.entries.filter((e) => e.path.startsWith("volumes."));
+      expect(volEntries).toHaveLength(0);
+    });
+  });
+
+  // --- Bucket deletion warning ---
+
+  test("does not emit diff entry for bucket in current but not desired (deletion unsupported)", () => {
+    const desired: EnvironmentConfig = {};
+    const current: EnvironmentConfig = {
+      buckets: { "bucket-1": { region: "iad" } },
+    };
+    const diff = computeConfigDiff(desired, current, makeCtx());
+    // No diff entry — just a logger.warn (bucket deletion not supported by Railway)
+    const bucketEntries = diff.entries.filter((e) => e.category === "bucket");
+    expect(bucketEntries).toHaveLength(0);
+  });
 });
