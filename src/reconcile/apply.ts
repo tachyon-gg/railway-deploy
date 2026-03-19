@@ -289,33 +289,9 @@ export async function applyConfigDiff(
         mrc[region] = null;
         (svcCfg.deploy as Record<string, unknown>).multiRegionConfig = mrc;
       }
-    } else if (
-      entry.category === "setting" &&
-      entry.path.startsWith("networking.tcpProxies.") &&
-      (entry.action === "remove" || entry.action === "update") &&
-      entry.serviceName &&
-      serviceNameToId
-    ) {
-      // TCP proxy removal/update: delete via mutation before staging.
-      // Patches can create proxies but can't remove them (null injection is ignored).
-      // For updates (port change), delete old proxy so the patch can create the new one.
-      const svcId = serviceNameToId.get(entry.serviceName);
-      if (svcId) {
-        try {
-          const proxy = await fetchTcpProxy(client, svcId, environmentId);
-          if (proxy) {
-            await deleteTcpProxy(client, proxy.id);
-            logger.success(`Deleted TCP proxy ${proxy.applicationPort} for ${entry.serviceName}`);
-          }
-        } catch (err) {
-          result.errors.push({
-            step: `tcp-proxy-delete:${entry.serviceName}`,
-            error: extractErrorMessage(err),
-          });
-        }
-      }
     }
     // "volume" remove entries: handled post-commit via volumeDelete (step 4.8)
+    // TCP proxy removal/update: handled post-commit via Step 4.4
     // "setting" category: already nulled by config builder — no injection needed
     // "service" category: handled by step 5 (deleteService)
   }
@@ -384,6 +360,37 @@ export async function applyConfigDiff(
         error: extractErrorMessage(err),
       });
       return result; // Don't proceed to deletions if commit failed
+    }
+  }
+
+  // Step 4.4: Delete TCP proxies (must happen after commit, not in --stage mode)
+  // Patches can create proxies but can't remove them (null injection is ignored).
+  // For updates (port change), delete old proxy so the committed patch can create the new one.
+  if (result.committed) {
+    for (const entry of diff.entries) {
+      if (
+        entry.category === "setting" &&
+        entry.path.startsWith("networking.tcpProxies.") &&
+        (entry.action === "remove" || entry.action === "update") &&
+        entry.serviceName &&
+        serviceNameToId
+      ) {
+        const svcId = serviceNameToId.get(entry.serviceName);
+        if (svcId) {
+          try {
+            const proxy = await fetchTcpProxy(client, svcId, environmentId);
+            if (proxy) {
+              await deleteTcpProxy(client, proxy.id);
+              logger.success(`Deleted TCP proxy ${proxy.applicationPort} for ${entry.serviceName}`);
+            }
+          } catch (err) {
+            result.errors.push({
+              step: `tcp-proxy-delete:${entry.serviceName}`,
+              error: extractErrorMessage(err),
+            });
+          }
+        }
+      }
     }
   }
 

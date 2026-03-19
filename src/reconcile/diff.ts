@@ -602,11 +602,19 @@ function enrichServiceDefaults(svc: EnvConfigService): EnvConfigService {
  * sends null for unset fields. Both mean "not set" — treat them as equal.
  */
 /**
- * Normalize null/undefined/false to a common empty sentinel for comparison.
+ * Normalize null/undefined/false/0 to a common empty sentinel for comparison.
  * Railway omits default fields from config — both null (our "clear" signal)
  * and undefined (Railway's "not set") mean the same thing.
  * Railway also omits boolean fields at their default value (false), so
  * false is equivalent to undefined/null for diff purposes.
+ *
+ * Zero is included because Railway omits numeric fields at their default (0)
+ * for fields like drainingSeconds and overlapSeconds. Without this, desired=0
+ * vs current=undefined would produce a spurious diff. Fields where 0 is a
+ * meaningful non-default value (e.g. restartPolicyMaxRetries, default 10)
+ * are handled by enrichServiceDefaults which fills in the real default when
+ * the value is undefined, so the comparison never reaches normalizeEmpty
+ * with a 0-vs-undefined mismatch.
  */
 function normalizeEmpty(v: unknown): unknown {
   if (v === null || v === undefined || v === false || v === 0) return undefined;
@@ -703,6 +711,11 @@ function diffServiceDeploy(
   // When user doesn't set region, skip (Railway keeps its default)
   const dMrc = (desired?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
   const cMrc = (current?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
+  if (Object.keys(dMrc).length === 0 && Object.keys(cMrc).length > 0) {
+    logger.warn(
+      `${name} has Railway region assignment — remove individual regions from the regions: map to clear them`,
+    );
+  }
   if (Object.keys(dMrc).length > 0) {
     // User configured region — diff per-key
     for (const [region, dv] of Object.entries(dMrc)) {
