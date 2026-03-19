@@ -711,11 +711,8 @@ function diffServiceDeploy(
   // When user doesn't set region, skip (Railway keeps its default)
   const dMrc = (desired?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
   const cMrc = (current?.multiRegionConfig as Record<string, unknown> | null | undefined) ?? {};
-  if (Object.keys(dMrc).length === 0 && Object.keys(cMrc).length > 0) {
-    logger.warn(
-      `${name} has Railway region assignment — remove individual regions from the regions: map to clear them`,
-    );
-  }
+  // When desired has no regions but current does, skip — Railway always assigns a default
+  // region. Removing `regions:` from config means "don't manage regions" (Railway keeps its value).
   if (Object.keys(dMrc).length > 0) {
     // User configured region — diff per-key
     for (const [region, dv] of Object.entries(dMrc)) {
