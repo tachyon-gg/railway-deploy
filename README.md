@@ -182,7 +182,7 @@ When a service has per-environment overrides:
 | Field type | Merge behavior |
 |------------|---------------|
 | `params`, `variables` | Shallow merge (override keys replace defaults) |
-| `domains`, `source`, `volume`, `regions`, `healthcheck`, `build` | Override replaces entirely |
+| `domains`, `source`, `volume`, `regions`, `healthcheck`, `build` | Replace entirely |
 | Scalar fields (`start_command`, etc.) | Override replaces |
 
 ---
@@ -193,14 +193,21 @@ Every field below can be used on service defaults, per-environment overrides, an
 
 #### Source
 
+Source is a discriminated union — use **either** `repo` or `image`, not both.
+
 ```yaml
+# Repo source — deploy from a GitHub repository
 source:
-  image: nginx:latest            # Docker image (Docker Hub, GHCR, etc.)
-  # OR
-  repo: myorg/my-repo            # GitHub repository
-  branch: main                   # Branch to deploy from (GitHub repos)
+  repo: myorg/my-repo
+  branch: main                   # Branch to deploy from
   root_directory: /packages/api  # Root directory (monorepo support)
   wait_for_ci: true              # Wait for GitHub Actions to pass before deploying
+```
+
+```yaml
+# Image source — deploy from a container image
+source:
+  image: nginx:latest            # Docker image (Docker Hub, GHCR, etc.)
   registry_credentials:          # For private container registries
     username: ${REGISTRY_USER}
     password: ${REGISTRY_PASS}
@@ -215,16 +222,42 @@ source:
 
 #### Build
 
+Build is a discriminated union — fields depend on the `builder` value.
+
 ```yaml
+# Railpack (default)
 build:
-  builder: NIXPACKS             # RAILPACK (default), NIXPACKS, DOCKERFILE
+  builder: railpack
   command: npm run build         # Custom build command
-  dockerfile_path: Dockerfile.prod # Path to Dockerfile
   watch_patterns:                # File patterns that trigger deploys
     - /packages/api/src/**
-    - /packages/shared/**
-railway_config_file: railway.toml # Path to railway.json/toml
-metal: true                      # Enable Metal build environment (faster builds)
+  metal: true                    # Enable Metal build environment (faster builds)
+```
+
+```yaml
+# Nixpacks
+build:
+  builder: nixpacks
+  command: npm run build
+  watch_patterns:
+    - /packages/api/src/**
+  metal: true
+```
+
+```yaml
+# Dockerfile
+build:
+  builder: dockerfile
+  dockerfile_path: Dockerfile.prod  # Path to Dockerfile
+  watch_patterns:
+    - /packages/api/src/**
+  metal: true
+```
+
+`railway_config_file` is a separate service-level field (not part of `build`):
+
+```yaml
+railway_config_file: railway.toml  # Path to railway.json/toml in the repository
 ```
 
 #### Deploy
@@ -245,10 +278,10 @@ healthcheck:                     # HTTP healthcheck
   timeout: 300                   # Timeout in seconds (default: 300)
 
 # Restart policy — string shorthand or object with max_retries
-restart_policy: ALWAYS           # ALWAYS, NEVER, or ON_FAILURE
+restart_policy: always           # always, never, or on_failure
 
-restart_policy:                  # Object form for ON_FAILURE with retries
-  type: ON_FAILURE
+restart_policy:                  # Object form for on_failure with retries
+  type: on_failure
   max_retries: 5
 
 serverless: true                 # Enable serverless sleeping (scale to zero when idle)
@@ -418,16 +451,16 @@ services:
       repo: myorg/web-app
       root_directory: /packages/web
     build:
-      builder: NIXPACKS
+      builder: nixpacks
       command: npm run build
-    metal: true
+      metal: true
     start_command: npm start
     pre_deploy_command: npm run migrate
     healthcheck:
       path: /health
       timeout: 60
     restart_policy:
-      type: ON_FAILURE
+      type: on_failure
       max_retries: 5
     serverless: true
     railway_domain:
