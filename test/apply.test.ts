@@ -74,7 +74,7 @@ const { applyConfigDiff } = await import("../src/reconcile/apply.js");
 
 // --- Helpers ---
 
-const fakeClient = {} as any;
+const fakeClient = {} as unknown as import("graphql-request").GraphQLClient;
 const projectId = "proj-1";
 const environmentId = "env-1";
 
@@ -647,7 +647,7 @@ describe("applyConfigDiff", () => {
       const stagedConfig = (
         mockStageEnvironmentChanges.mock.calls[0] as unknown[]
       )[2] as EnvironmentConfig;
-      expect((stagedConfig.sharedVariables as any).OLD_VAR).toBeNull();
+      expect((stagedConfig.sharedVariables as Record<string, unknown>).OLD_VAR).toBeNull();
     });
 
     test("null-injects removed service variable", async () => {
@@ -683,7 +683,9 @@ describe("applyConfigDiff", () => {
       const stagedConfig = (
         mockStageEnvironmentChanges.mock.calls[0] as unknown[]
       )[2] as EnvironmentConfig;
-      expect((stagedConfig.services?.["svc-web"]?.variables as any)?.DEAD_VAR).toBeNull();
+      expect(
+        (stagedConfig.services?.["svc-web"]?.variables as Record<string, unknown>)?.DEAD_VAR,
+      ).toBeNull();
     });
 
     test("null-injects removed region key", async () => {
@@ -723,7 +725,8 @@ describe("applyConfigDiff", () => {
       const stagedConfig = (
         mockStageEnvironmentChanges.mock.calls[0] as unknown[]
       )[2] as EnvironmentConfig;
-      const mrc = (stagedConfig.services?.["svc-web"]?.deploy as any)?.multiRegionConfig;
+      const mrc = (stagedConfig.services?.["svc-web"]?.deploy as Record<string, unknown>)
+        ?.multiRegionConfig as Record<string, unknown>;
       expect(mrc["us-west1"]).toBeNull();
       expect(mrc["us-east4"]).toEqual({ numReplicas: 1 });
     });
@@ -796,7 +799,9 @@ describe("applyConfigDiff", () => {
     });
 
     test("handles TCP proxy fetch returning null", async () => {
-      mockFetchTcpProxyByPort.mockImplementation(() => Promise.resolve(null as any));
+      mockFetchTcpProxyByPort.mockImplementation(() =>
+        Promise.resolve(null as unknown as { id: string; applicationPort: number }),
+      );
 
       const diff: ConfigDiff = {
         ...emptyDiff(),
@@ -1631,7 +1636,11 @@ describe("applyConfigDiff", () => {
     // even after retries, an error is reported. We use a longer timeout
     // because the code retries with exponential backoff (1s + 2s + 4s = 7s).
     test("reports error when private endpoint not found for add", async () => {
-      mockFetchPrivateNetworkEndpoint.mockImplementation(() => Promise.resolve(null as any));
+      mockFetchPrivateNetworkEndpoint.mockImplementation(() =>
+        Promise.resolve(
+          null as unknown as { id: string; dnsName: string; privateNetworkId: string },
+        ),
+      );
 
       const diff: ConfigDiff = {
         ...emptyDiff(),
@@ -1880,7 +1889,7 @@ describe("applyConfigDiff", () => {
   describe("error message extraction", () => {
     test("extracts GraphQL error messages from response", async () => {
       const gqlError = new Error("Request failed");
-      (gqlError as any).response = {
+      (gqlError as unknown as Record<string, unknown>).response = {
         errors: [{ message: "You have exceeded your service limit" }],
       };
       mockCreateService.mockImplementation(() => Promise.reject(gqlError));
@@ -1945,7 +1954,7 @@ describe("applyConfigDiff", () => {
 
     test("skips generic 'Problem processing request' from GQL response", async () => {
       const gqlError = new Error("The real error message");
-      (gqlError as any).response = {
+      (gqlError as unknown as Record<string, unknown>).response = {
         errors: [{ message: "Problem processing request" }],
       };
       mockCreateService.mockImplementation(() => Promise.reject(gqlError));
