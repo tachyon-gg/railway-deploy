@@ -46,11 +46,11 @@ export type ActiveFeatureFlag =
   | 'AUDIT_LOGS'
   | 'BUCKET_FILE_BROWSER'
   | 'CDN_CACHING'
-  | 'CONVERSATIONAL_UI'
   | 'DEBUG_SMART_DIAGNOSIS'
   | 'IPV6_EGRESS'
   | 'MAGIC_CONFIG'
   | 'POSTGRES_HA'
+  | 'POSTGRES_PGBOUNCER'
   | 'PRIORITY_BOARDING'
   | 'SMART_DIAGNOSIS'
   | 'UNLIMITED_SMART_DIAGNOSIS';
@@ -1060,6 +1060,23 @@ export type GitHubAccess = {
 
 export type GitHubBranch = {
   name: Scalars['String']['output'];
+};
+
+export type GitHubCheck = {
+  name: Scalars['String']['output'];
+  status: Scalars['String']['output'];
+};
+
+export type GitHubPrInfo = {
+  additions: Scalars['Int']['output'];
+  author: Scalars['String']['output'];
+  body: Scalars['String']['output'];
+  changedFiles: Scalars['Int']['output'];
+  checks: Array<GitHubCheck>;
+  deletions: Scalars['Int']['output'];
+  mergeable?: Maybe<Scalars['Boolean']['output']>;
+  state: Scalars['String']['output'];
+  title: Scalars['String']['output'];
 };
 
 export type GitHubRepo = {
@@ -3591,6 +3608,8 @@ export type Query = {
   gitHubSshKeys: Array<GitHubSshKey>;
   /** Check if a repo name is available */
   githubIsRepoNameAvailable: Scalars['Boolean']['output'];
+  /** Get info for a GitHub pull request */
+  githubPRInfo?: Maybe<GitHubPrInfo>;
   /** Checks if user has access to GitHub repository */
   githubRepo: GitHubRepoWithoutInstallation;
   /** Get branches for a GitHub repo that the authenticated user has access to */
@@ -3993,6 +4012,12 @@ export type QueryGitHubRepoAccessAvailableArgs = {
 
 export type QueryGithubIsRepoNameAvailableArgs = {
   fullRepoName: Scalars['String']['input'];
+};
+
+
+export type QueryGithubPrInfoArgs = {
+  prNumber: Scalars['Int']['input'];
+  serviceId: Scalars['String']['input'];
 };
 
 
