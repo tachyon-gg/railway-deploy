@@ -45,12 +45,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.7",
-    "@graphql-codegen/cli": "^5.0.3",
+    "@graphql-codegen/cli": "^6.2.1",
     "@graphql-codegen/typed-document-node": "^6.1.7",
-    "@graphql-codegen/typescript": "^4.1.2",
-    "@graphql-codegen/typescript-operations": "^4.4.0",
+    "@graphql-codegen/typescript": "^5.0.9",
+    "@graphql-codegen/typescript-operations": "^5.0.9",
     "@types/bun": "latest",
     "husky": "^9.1.7",
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.2"
   }
 }
