@@ -6,26 +6,59 @@ import {
   GetPrivateNetworksDocument,
   GetProjectDocument,
   GetTcpProxiesDocument,
-  ListProjectsDocument,
 } from "../generated/graphql.js";
 import { logger } from "../logger.js";
 import type { EnvironmentConfig } from "../types/envconfig.js";
 
+interface ProjectNode {
+  id: string;
+  name: string;
+}
+interface ProjectEdges {
+  edges: Array<{ node: ProjectNode }>;
+}
+interface ListProjectsCompat {
+  me?: {
+    workspaces?: Array<{ projects?: ProjectEdges }>;
+    projects?: ProjectEdges;
+  };
+}
+
+// Railway migrated projects under workspaces, so the legacy top-level `projects`
+// query returns an empty list for any workspace-scoped account. Query the
+// workspace-nested projects (keeping the user-level list as a fallback for older
+// accounts), so a personal/CLI token resolves the project correctly.
+const LIST_PROJECTS_COMPAT = /* GraphQL */ `
+  query ListProjectsCompat {
+    me {
+      workspaces { projects { edges { node { id name } } } }
+      projects { edges { node { id name } } }
+    }
+  }
+`;
+
 /**
- * Resolve a project name to its ID.
+ * Resolve a project name (or id) to its ID.
  */
 export async function resolveProjectId(
   client: GraphQLClient,
   projectName: string,
 ): Promise<string> {
-  const data = await client.request(ListProjectsDocument);
+  const data = await client.request<ListProjectsCompat>(LIST_PROJECTS_COMPAT);
 
-  const project = data.projects.edges.find((e) => e.node.name === projectName);
+  const nodes: ProjectNode[] = [
+    ...(data.me?.workspaces ?? []).flatMap((w) => w.projects?.edges ?? []),
+    ...(data.me?.projects?.edges ?? []),
+  ].map((e) => e.node);
+
+  const project = nodes.find(
+    (n) => n.name === projectName || n.id === projectName,
+  );
   if (!project) {
-    const available = data.projects.edges.map((e) => e.node.name).join(", ");
+    const available = nodes.map((n) => n.name).join(", ");
     throw new Error(`Project "${projectName}" not found. Available: ${available}`);
   }
-  return project.node.id;
+  return project.id;
 }
 
 /**
